@@ -19,7 +19,10 @@ local function mark_as_finished(self,dbname,job)
                       ["$set"] = {
                         status = STATUS.FINISHED,
                         finished_at = os.time(),
-                      }
+                      },
+                      ["$unset"] = {
+                        started_at = "",
+                      },
                     },
                     false,
                     false) )
@@ -45,10 +48,9 @@ end
 local function get_func(self, fname, args)
   local f = self.funcs[fname]
   if not f then
-      f = require(fname)
-      print(f.init)
-      if f.init then f.init(args) end
-      self.funcs[fname] = f
+    f = require(fname)
+    if f.init then f.init(args) end
+    self.funcs[fname] = f
   end
   return coroutine.wrap(f.func)
 end
@@ -85,20 +87,21 @@ local function take_next_job(self)
     assert( db:update(dbname, query,
                       {
                         ["$set"] = {
-                          worker  = hostname,
                           tmpname = tmpname,
                           started_at = t,
                           status = STATUS.RUNNING,
+                        },
+                        ["$unset"] = {
+                          enqued_at = "",
                         },
                       },
                       false,    -- no create a new document if not exists
                       false) )  -- only update the first match
     local one_job = assert( db:find_one(dbname,
                                         {
-                                          status  = STATUS.RUNNING,
-                                          worker  = hostname,
                                           tmpname = tmpname,
                                           started_at = t,
+                                          status = STATUS.RUNNING,
                                         }) )
     return dbname,one_job,fn,result_dbname,need_group
   else
@@ -128,7 +131,7 @@ function worker_methods:execute()
     local dbname,job,fn,result_dbname,need_group = take_next_job(self)
     if dbname then
       assert(dbname and job and fn and result_dbname)
-      print("# EXECUTING JOB ", job.taskid, job._id, dbname, result_dbname)
+      print("# EXECUTING JOB ", job._id, dbname, result_dbname)
       repeat
         local key,value = fn(job.key,job.value)
         if key ~= nil then

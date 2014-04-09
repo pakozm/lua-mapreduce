@@ -102,18 +102,13 @@ local function sleep(n)
 end
 
 -- makes a map/reduce task table
-local function make_task(key, value, taskid)
-  assert(key~=nil and value~=nil and taskid, "Needs a key, value and taskid")
+local function make_task(key, value)
+  assert(key~=nil and value~=nil, "Needs a key and a value")
   return {
     key = tostring(key),
     value = value,
-    taskid = taskid,
-    server = util.get_hostname(),
-    worker = util.DEFAULT_HOSTNAME,
     tmpname = util.DEFAULT_TMPNAME,
     enqued_at = os.time(),
-    started_at = util.DEFAULT_DATE,
-    finished_at = util.DEFAULT_DATE,
     status = util.STATUS.WAITING,
   }
 end

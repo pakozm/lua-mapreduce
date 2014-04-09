@@ -13,13 +13,6 @@ local STATUS = util.STATUS
 local make_task = util.make_task
 
 -- PRIVATE FUNCTIONS
-local set_task_id,get_task_id,inc_task_id
-do
-  local taskid=0
-  set_task_id = function(v) taskid = v end
-  get_task_id = function() return taskid end
-  inc_task_id = function() taskid = taskid + 1 return taskid end
-end
 
 -- sets the job status for the cluster, which indicates the workers which kind
 -- of work the must perform
@@ -76,31 +69,6 @@ local function remove_all_tasks(db,ns)
   return db:remove(ns, {}, false)
 end
 
-local function look_for_last_task_id(db,ns)
-  local res = db:mapreduce(ns,
-                      -- inline javascript
-                      [[
-function() {
-  emit(0, this.taskid)
-}
-]],
-                      -- inline javascript
-                      [[
-function(key,values) {
-  var res = 0;
-  for ( var i=0; i<values.length; i++ )
-    if ( values[i] > res ) res = values[i];
-  return res;
-}
-]])
-  if util.check_mapreduce_result(res) then
-    if res.code then assert(util.check_mapreduce_result(res)) end
-    return res.results[1].value
-  else
-    return 0
-  end
-end
-                             
 -- SERVER METHODS
 local server_methods = {}
 
@@ -148,9 +116,6 @@ function server_methods:configure(params)
     scripts[name] = params[name]
   end
   local db = self:connect()
-  -- look for last task id if available
-  set_task_id(math.max(look_for_last_task_id(db,self.map_dbname),
-                       look_for_last_task_id(db,self.red_dbname)))
   --
   self.taskfn = require(scripts.taskfn)
   if scripts.finalfn then
@@ -186,7 +151,7 @@ function server_methods:prepare_map()
     
     -- FIXME: check how to process task keys which are defined by a previously
     -- broken execution and didn't belong to the current task execution
-    assert( db:insert(map_dbname, make_task(key,value,inc_task_id())) )
+    assert( db:insert(map_dbname, make_task(key,value)) )
   end
   set_job_status(self,"MAP")
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
@@ -207,7 +172,7 @@ function server_methods:prepare_reduce()
     
     -- FIXME: check how to process task keys which are defined by a previously
     -- broken execution and didn't belong to the current task execution
-    assert( db:insert(red_dbname, make_task(pair.key,pair.values,inc_task_id())) )
+    assert( db:insert(red_dbname, make_task(pair.key,pair.values)) )
   end
   set_job_status(self,"REDUCE")
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
@@ -296,14 +261,6 @@ server.utest = function(connection_string, dbname, auth_table)
   local db = assert(s:connect())
   assert(s.db)
   assert(db:find_one(s.job_dbname).job == "WAIT")
-  -- check mapreduce for task id
-  db:drop_collection("tmp.tasks")
-  assert(look_for_last_task_id(db,"tmp.tasks") == 0)
-  db:insert("tmp.tasks",{ taskid = 20 })
-  db:insert("tmp.tasks",{ taskid = 10 })
-  db:insert("tmp.tasks",{ taskid = 50 })
-  assert(look_for_last_task_id(db, "tmp.tasks") == 50)
-  db:drop_collection("tmp.tasks")
   -- clean previous failed tests
   db:drop_collection(s.map_dbname)
   db:drop_collection(s.map_result_dbname)
