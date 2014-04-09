@@ -1,4 +1,5 @@
 return {
+  init = function() end,
   func = function(db,ns)
     local q = db:query(ns,{})
     for pair in q:results() do
