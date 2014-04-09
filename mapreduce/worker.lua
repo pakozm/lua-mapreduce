@@ -42,10 +42,14 @@ local function insert(self,key,value,dbname)
   assert( db:insert(dbname, { key = key, value = value }) )
 end
 
-local function get_func(self, fname)
-  local f = self.funcs[fname] or require(fname)
+local function get_func(self, fname, args)
+  local f = self.funcs[fname]
+  if not f then
+      f = require(fname)
+      if f.init then f.init(args) end
+  end
   self.funcs[fname] = f
-  return coroutine.wrap(f)
+  return coroutine.wrap(f.func)
 end
 
 local function take_next_job(self)
@@ -57,12 +61,12 @@ local function take_next_job(self)
   local job_status = db:find_one(job_dbname) or "FINISHED"
   if job_status.job == "MAP" then
     dbname = job_status.map_tasks
-    fn = get_func(self, job_status.mapfn)
+    fn = get_func(self, job_status.mapfn, job_status.map_args)
     result_dbname = job_status.map_results
     need_group=true
   elseif job_status.job == "REDUCE" then
     dbname = job_status.red_tasks
-    fn = get_func(self, job_status.reducefn)
+    fn = get_func(self, job_status.reducefn, job_status.reduce_args)
     result_dbname = job_status.red_results
   elseif job_status.job == "WAIT" then
     return false

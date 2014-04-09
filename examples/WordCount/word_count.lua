@@ -5,6 +5,10 @@ s:configure{
   mapfn    = "examples.WordCount.mapfn",
   reducefn = "examples.WordCount.reducefn",
   finalfn  = "examples.WordCount.finalfn",
+  task_args = {a=1,b=2,c=3},
+  -- map_args = {},
+  -- reduce_args = {},
+  -- final_args = {},
 }
 --
 s:drop_collections()

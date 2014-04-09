@@ -34,7 +34,10 @@ local function set_job_status(self,status)
                                    map_tasks   = self.map_dbname,
                                    map_results = self.map_result_dbname,
                                    red_tasks   = self.red_dbname,
-                                   red_results = self.red_result_dbname,}, },
+                                   red_results = self.red_result_dbname,
+                                   map_args    = self.map_args,
+                                   reduce_args = self.reduce_args,
+                    }, },
                     true, false) )
 end
 
@@ -120,6 +123,10 @@ end
 -- configures the server with the script string
 function server_methods:configure(params)
   self.configured = true
+  self.task_args = params.task_args
+  self.map_args = params.map_args
+  self.reduce_args = params.reduce_args
+  self.final_args = params.final_args
   local dbname = self.dbname
   local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
@@ -128,8 +135,12 @@ function server_methods:configure(params)
   for _,name in ipairs{ "taskfn", "mapfn", "reducefn", "finalfn" } do
     assert(params[name] and type(params[name]) == "string",
            string.format("Needs a %s module", name))
-    assert(util.iscallable(require(params[name])),
-           string.format("Module %s must return a function or a callable table",
+    local aux = require(params[name])
+    assert(type(aux) == "table",
+           string.format("Module %s must return a table",
+                         name))
+    assert(aux.func,
+           string.format("Module %s must return a table with the field func",
                          name))
     scripts[name] = params[name]
   end
@@ -142,8 +153,10 @@ function server_methods:configure(params)
   if scripts.finalfn then
     self.finalfn = require(scripts.finalfn)
   else
-    self.finalfn = function() end
+    self.finalfn = { func = function() end }
   end
+  if self.taskfn.init then self.taskfn.init(self.task_args) end
+  if self.finalfn.init then self.finalfn.init(self.final_args) end
   self.mapfn = params.mapfn
   self.reducefn = params.reducefn
   local job_dbname = self.job_dbname
@@ -162,7 +175,8 @@ function server_methods:prepare_map()
   local map_dbname = self.map_dbname
   remove_pending_tasks(db, map_dbname)
   -- create map tasks in mongo database
-  for key,value in coroutine.wrap(self.taskfn) do
+  local f = self.taskfn.func
+  for key,value in coroutine.wrap(f) do
     assert(tostring(key), "taskfn must return a string key")
     -- FIXME: check what happens when the insert is a duplicate of an existing
     -- key
@@ -210,7 +224,8 @@ end
 function server_methods:finalize()
   local db = self:connect()
   set_job_status(self,"FINISHED")
-  self.finalfn(db,self.red_result_dbname)
+  local f = self.finalfn.func
+  f(db,self.red_result_dbname)
   -- drop collections, except reduce result and job status
   db:drop_collection(self.map_dbname)
   db:drop_collection(self.map_result_dbname)
@@ -244,7 +259,7 @@ server.new = function(connection_string, dbname, auth_table)
                 red_dbname = string.format("%s.red_tasks", dbname),
                 map_result_dbname = string.format("%s.map_results", dbname),
                 red_result_dbname = string.format("%s.red_results", dbname),
-                auth_table = auth_table }
+                auth_table = auth_table, }
   setmetatable(obj, server_metatable)
   return obj
 end
@@ -291,9 +306,11 @@ server.utest = function(connection_string, dbname, auth_table)
   db:drop_collection(s.map_result_dbname)
   db:drop_collection(s.red_dbname)
   -- check prepare_map
-  s.taskfn = function()
-    for i=1,10 do coroutine.yield(i,{ file=i }) end
-  end
+  s.taskfn = {
+    func = function()
+      for i=1,10 do coroutine.yield(i,{ file=i }) end
+    end
+  }
   local do_map_step = s:prepare_map()
   assert(db:find_one(s.job_dbname).job == "MAP")
   assert(do_map_step)
@@ -325,19 +342,21 @@ server.utest = function(connection_string, dbname, auth_table)
   -- finalize
   db:insert(s.red_result_dbname, { key="one", value=13 })
   db:insert(s.red_result_dbname, { key="two", value=6 })
-  s.finalfn = function(db,red_result_dbname)
-    local r = assert(db:query(red_result_dbname, {}))
-    assert(r:itcount() == 2)
-    for pair in r:results() do
-      if pair.key == "one" then
-        assert(pair.value == 13)
-      elseif pair.key == "two" then
-        assert(pair.value == 6)
-      else
-        error("Incorrect key: " .. pair.key)
+  s.finalfn = {
+    func = function(db,red_result_dbname)
+      local r = assert(db:query(red_result_dbname, {}))
+      assert(r:itcount() == 2)
+      for pair in r:results() do
+        if pair.key == "one" then
+          assert(pair.value == 13)
+        elseif pair.key == "two" then
+          assert(pair.value == 6)
+        else
+          error("Incorrect key: " .. pair.key)
+        end
       end
     end
-  end
+  }
   s:finalize()
   assert(db:find_one(s.job_dbname).job == "FINISHED")
   db:drop_collection(s.red_result_dbname)
