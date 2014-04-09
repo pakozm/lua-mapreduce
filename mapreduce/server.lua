@@ -142,6 +142,9 @@ function server_methods:configure(params)
     assert(aux.func,
            string.format("Module %s must return a table with the field func",
                          name))
+    assert(aux.init or not params[ name:gsub("fn","_args") ],
+           string.format("When args are given, a init function is needed: %s",
+                         name))
     scripts[name] = params[name]
   end
   local db = self:connect()
