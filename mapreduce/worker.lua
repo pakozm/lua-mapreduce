@@ -46,9 +46,10 @@ local function get_func(self, fname, args)
   local f = self.funcs[fname]
   if not f then
       f = require(fname)
+      print(f.init)
       if f.init then f.init(args) end
+      self.funcs[fname] = f
   end
-  self.funcs[fname] = f
   return coroutine.wrap(f.func)
 end
 
