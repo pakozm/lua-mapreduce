@@ -21,6 +21,23 @@ do
   inc_task_id = function() taskid = taskid + 1 return taskid end
 end
 
+-- sets the job status for the cluster, which indicates the workers which kind
+-- of work the must perform
+local function set_job_status(self,status)
+  local db = self:connect()
+  local job_dbname = self.job_dbname
+  assert( db:update(job_dbname, { key = "unique" },
+                    { ["$set"] = { key         = "unique",
+                                   job         = status,
+                                   mapfn       = self.mapfn,
+                                   reducefn    = self.reducefn,
+                                   map_tasks   = self.map_dbname,
+                                   map_results = self.map_result_dbname,
+                                   red_tasks   = self.red_dbname,
+                                   red_results = self.red_result_dbname,}, },
+                    true, false) )
+end
+
 -- set key to be a unique index
 local function ensure_unique_index(db,ns)
   assert(db:ensure_index(ns, { key = 1 }, true))
@@ -34,16 +51,20 @@ local function make_task_coroutine_wrap(self,ns)
                           repeat
                             local db = self:connect()
                             local M = db:count(ns, { status = STATUS.FINISHED })
+                            io.stderr:write(string.format("\r%6.1f %% ",
+                                                          M/N*100))
+                            io.stderr:flush()
                             if M < N then coroutine.yield(true) end
                           until M == N
+                          io.stderr:write("\n")
                         end)
 end
 
 -- removes all the tasks which are in WAITING or BROKEN states
 local function remove_pending_tasks(db,ns)
   return db:remove(ns,
-                   { ["$or"] = { status = STATUS.BROKEN,
-                                 status = STATUS.WAITING } },
+                   { ["$or"] = { { status = STATUS.BROKEN, },
+                                 { status = STATUS.WAITING } } },
                    false)
 end
 
@@ -84,6 +105,8 @@ local server_methods = {}
 -- dbclient object
 function server_methods:connect()
   if not self.db or self.db:is_failed() then
+    assert(self.configured, "Call configure method")
+    assert(not self.finished, "The job has finished")
     local db = assert( mongo.Connection.New{ auto_reconnect=true,
                                              rw_timeout=util.DEFAULT_RW_TIMEOUT} )
     assert( db:connect(self.connection_string) )
@@ -95,29 +118,49 @@ function server_methods:connect()
 end
 
 -- configures the server with the script string
-function server_methods:configure(loadable_string)
+function server_methods:configure(params)
+  self.configured = true
   local dbname = self.dbname
-  local result = load(loadable_string)()
+  local taskfn,mapfn,reducefn,finalfn
+  local scripts = {}
+  assert(params.taskfn and params.mapfn and params.reducefn,
+         "Fields taskfn, mapfn and reducefn are mandatory")
   for _,name in ipairs{ "taskfn", "mapfn", "reducefn", "finalfn" } do
-    assert(result[name] and type(result[name]) == "function",
-           string.format("Needs a %s function/coroutine", name))
+    assert(params[name] and type(params[name]) == "string",
+           string.format("Needs a %s module", name))
+    assert(util.iscallable(require(params[name])),
+           string.format("Module %s must return a function or a callable table",
+                         name))
+    scripts[name] = params[name]
   end
   local db = self:connect()
   -- look for last task id if available
-  set_task_id(math.max(look_for_last_task_id(db,map_dbname),
-                       look_for_last_task_id(db,red_dbname)))
+  set_task_id(math.max(look_for_last_task_id(db,self.map_dbname),
+                       look_for_last_task_id(db,self.red_dbname)))
   --
-  self.taskfn = result.taskfn
-  self.finalfn = result.finalfn
+  self.taskfn = require(scripts.taskfn)
+  if scripts.finalfn then
+    self.finalfn = require(scripts.finalfn)
+  else
+    self.finalfn = function() end
+  end
+  self.mapfn = params.mapfn
+  self.reducefn = params.reducefn
+  local job_dbname = self.job_dbname
+  ensure_unique_index(db,job_dbname)
+  ensure_unique_index(db,self.map_dbname)
+  ensure_unique_index(db,self.map_result_dbname)
+  ensure_unique_index(db,self.red_dbname)
+  ensure_unique_index(db,self.red_result_dbname)
+  set_job_status(self,"WAIT")
 end
 
--- insert the work in the mongo db and returns a coroutine ready to be executed
+-- insert the job in the mongo db and returns a coroutine ready to be executed
 -- as an iterator
 function server_methods:prepare_map()
   local db = self:connect()
   local map_dbname = self.map_dbname
   remove_pending_tasks(db, map_dbname)
-  ensure_unique_index(db,map_dbname)
   -- create map tasks in mongo database
   for key,value in coroutine.wrap(self.taskfn) do
     assert(tostring(key), "taskfn must return a string key")
@@ -128,37 +171,65 @@ function server_methods:prepare_map()
     -- broken execution and didn't belong to the current task execution
     assert( db:insert(map_dbname, make_task(key,value,inc_task_id())) )
   end
+  set_job_status(self,"MAP")
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
   return make_task_coroutine_wrap(self, map_dbname)
 end
 
--- insert the work in the mongo db and returns a coroutine
+-- insert the job in the mongo db and returns a coroutine
 function server_methods:prepare_reduce()
   local db = self:connect()
   local map_result_dbname = self.map_result_dbname
   local red_dbname = self.red_dbname
+  remove_pending_tasks(db, red_dbname)
   -- create reduce tasks in mongo database, from map results
   local r = assert( db:query(map_result_dbname) )
   for pair in r:results() do
-    assert( db:insert(red_dbname, make_task(pair.key,pair.value,inc_task_id())) )
+    -- FIXME: check what happens when the insert is a duplicate of an existing
+    -- key
+    
+    -- FIXME: check how to process task keys which are defined by a previously
+    -- broken execution and didn't belong to the current task execution
+    assert( db:insert(red_dbname, make_task(pair.key,pair.values,inc_task_id())) )
   end
+  set_job_status(self,"REDUCE")
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
   return make_task_coroutine_wrap(self, red_dbname)
+end
+
+function server_methods:drop_collections()
+  local db = self:connect()
+  db:drop_collection(self.map_dbname)
+  db:drop_collection(self.map_result_dbname)
+  db:drop_collection(self.red_dbname)
+  db:drop_collection(self.red_result_dbname)
+  db:drop_collection(self.job_dbname)
 end
 
 -- finalizer for the map-reduce process
 function server_methods:finalize()
   local db = self:connect()
-  self.finalfn(self.red_result_dbname)
+  set_job_status(self,"FINISHED")
+  self.finalfn(db,self.red_result_dbname)
+  -- drop collections, except reduce result and job status
+  db:drop_collection(self.map_dbname)
+  db:drop_collection(self.map_result_dbname)
+  db:drop_collection(self.red_dbname)
+  self.finished = true
 end
 
 -- makes all the map-reduce process, looping into the coroutines until all tasks
 -- are done
 function server_methods:loop()
+  io.stderr:write("# Preparing MAP\n")
   local do_map_step = self:prepare_map()
+  io.stderr:write("# MAP execution\n")
   while do_map_step() do util.sleep(util.DEFAULT_SLEEP) end
+  io.stderr:write("# Preparing REDUCE\n")
   local do_reduce_step = self:prepare_reduce()
+  io.stderr:write("# REDUCE execution\n")
   while do_reduce_step() do util.sleep(util.DEFAULT_SLEEP) end
+  io.stderr:write("# FINAL execution\n")
   self:finalize()
 end
 
@@ -168,6 +239,7 @@ local server_metatable = { __index = server_methods }
 server.new = function(connection_string, dbname, auth_table)
   local obj = { connection_string = connection_string,
                 dbname = assert(dbname, "Needs a dbname as 2nd argument"),
+                job_dbname = string.format("%s.job", dbname),
                 map_dbname = string.format("%s.map_tasks", dbname),
                 red_dbname = string.format("%s.red_tasks", dbname),
                 map_result_dbname = string.format("%s.map_results", dbname),
@@ -190,13 +262,22 @@ server.utest = function(connection_string, dbname, auth_table)
   assert(get_task_id()==6)
   -- check server connection
   local s = server.new(connection_string, dbname, auth_table)
+  s.configured = true
+  s.mapfn      = "dummy"
+  s.reducefn   = "dummy"
+  set_job_status(s,"WAIT")
+  -- TODO: check the job_status
+  -----------------------------
   assert(s.connection_string == connection_string)
   assert(s.dbname == dbname)
   assert(s.map_dbname == dbname .. ".map_tasks")
   assert(s.map_result_dbname == dbname .. ".map_results")
   assert(s.red_dbname == dbname .. ".red_tasks")
+  assert(s.red_result_dbname == dbname .. ".red_results")
+  assert(s.job_dbname == dbname .. ".job")
   local db = assert(s:connect())
   assert(s.db)
+  assert(db:find_one(s.job_dbname).job == "WAIT")
   -- check mapreduce for task id
   db:drop_collection("tmp.tasks")
   assert(look_for_last_task_id(db,"tmp.tasks") == 0)
@@ -214,6 +295,7 @@ server.utest = function(connection_string, dbname, auth_table)
     for i=1,10 do coroutine.yield(i,{ file=i }) end
   end
   local do_map_step = s:prepare_map()
+  assert(db:find_one(s.job_dbname).job == "MAP")
   assert(do_map_step)
   assert(db:count(s.map_dbname, { status = STATUS.WAITING }) == 10)
   assert(do_map_step())
@@ -225,9 +307,10 @@ server.utest = function(connection_string, dbname, auth_table)
   assert(not do_map_step())
   remove_all_tasks(db,s.map_dbname)
   -- check prepare_reduce
-  db:insert(s.map_result_dbname, { key="one", value={ 4, 5, 1, 3 } })
-  db:insert(s.map_result_dbname, { key="two", value={ 1, 2, 3 } })
+  db:insert(s.map_result_dbname, { key="one", values={ 4, 5, 1, 3 } })
+  db:insert(s.map_result_dbname, { key="two", values={ 1, 2, 3 } })
   local do_red_step = s:prepare_reduce()
+  assert(db:find_one(s.job_dbname).job == "REDUCE")
   assert(do_red_step)
   assert(db:count(s.red_dbname, { status = STATUS.WAITING }) == 2)
   assert(do_red_step())
@@ -242,7 +325,7 @@ server.utest = function(connection_string, dbname, auth_table)
   -- finalize
   db:insert(s.red_result_dbname, { key="one", value=13 })
   db:insert(s.red_result_dbname, { key="two", value=6 })
-  s.finalfn = function(red_result_dbname)
+  s.finalfn = function(db,red_result_dbname)
     local r = assert(db:query(red_result_dbname, {}))
     assert(r:itcount() == 2)
     for pair in r:results() do
@@ -256,7 +339,9 @@ server.utest = function(connection_string, dbname, auth_table)
     end
   end
   s:finalize()
+  assert(db:find_one(s.job_dbname).job == "FINISHED")
   db:drop_collection(s.red_result_dbname)
+  db:drop_collection(s.job_dbname)
 end
 
 ------------------------------------------------------------------------------

@@ -2,10 +2,11 @@ local util = {
   _VERSION = "0.1",
   _NAME = "mapreduce.util",
   DEFAULT_RW_TIMEOUT = 30, -- seconds
-  DEFAULT_SLEEP = 10, -- seconds
+  DEFAULT_SLEEP = 1, -- seconds
+  DEFAULT_MICRO_SLEEP = 0.1, -- seconds
   DEFAULT_HOSTNAME = "<unknown>",
-  DEFAULT_IP = {0,0,0,0},
-  DEFAULT_DATE = "... ...  . ..:..:.. ....",
+  DEFAULT_TMPNAME = "<NONE>",
+  DEFAULT_DATE = 0,
   STATUS = { WAITING = 0, RUNNING = 1, BROKEN = 2, FINISHED = 3, },
 }
 
@@ -109,8 +110,10 @@ local function make_task(key, value, taskid)
     taskid = taskid,
     server = util.get_hostname(),
     worker = util.DEFAULT_HOSTNAME,
+    tmpname = util.DEFAULT_TMPNAME,
     enqued_at = os.time(),
     started_at = util.DEFAULT_DATE,
+    finished_at = util.DEFAULT_DATE,
     status = util.STATUS.WAITING,
   }
 end
