@@ -206,13 +206,22 @@ end
 function server_methods:loop()
   io.stderr:write("# Preparing MAP\n")
   local do_map_step = self:prepare_map()
+  collectgarbage("collect")
   io.stderr:write("# MAP execution\n")
-  while do_map_step() do util.sleep(util.DEFAULT_SLEEP) end
+  while do_map_step() do
+    util.sleep(util.DEFAULT_SLEEP)
+    collectgarbage("collect")
+  end
   io.stderr:write("# Preparing REDUCE\n")
   local do_reduce_step = self:prepare_reduce()
+  collectgarbage("collect")
   io.stderr:write("# REDUCE execution\n")
-  while do_reduce_step() do util.sleep(util.DEFAULT_SLEEP) end
+  while do_reduce_step() do
+    util.sleep(util.DEFAULT_SLEEP)
+    collectgarbage("collect")
+  end
   io.stderr:write("# FINAL execution\n")
+  collectgarbage("collect")
   self:finalize()
 end
 

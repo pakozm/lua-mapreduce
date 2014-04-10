@@ -133,6 +133,7 @@ function worker_methods:execute()
       assert(dbname and job and fn and result_dbname)
       print("# EXECUTING JOB ", job._id, dbname, result_dbname)
       repeat
+        collectgarbage("collect")
         local key,value = fn(job.key,job.value)
         if key ~= nil then
           if need_group then
