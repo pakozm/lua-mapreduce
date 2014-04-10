@@ -39,6 +39,11 @@ local function ensure_unique_index(db,ns)
   assert(db:ensure_index(ns, { key = 1 }, true))
 end
 
+-- set key to be an index
+local function ensure_index(db,ns)
+  assert(db:ensure_index(ns, { key = 1 }, false))
+end
+
 -- returns a coroutine.wrap which returns true until all tasks are finished
 local function make_task_coroutine_wrap(self,ns)
   local db = self:connect()
@@ -130,7 +135,7 @@ function server_methods:configure(params)
   local job_dbname = self.job_dbname
   ensure_unique_index(db,job_dbname)
   ensure_unique_index(db,self.map_dbname)
-  ensure_unique_index(db,self.map_result_dbname)
+  ensure_index(db,self.map_result_dbname)
   ensure_unique_index(db,self.red_dbname)
   ensure_unique_index(db,self.red_result_dbname)
   set_job_status(self,"WAIT")
@@ -164,8 +169,20 @@ function server_methods:prepare_reduce()
   local map_result_dbname = self.map_result_dbname
   local red_dbname = self.red_dbname
   remove_pending_tasks(db, red_dbname)
-  -- create reduce tasks in mongo database, from map results
-  local r = assert( db:query(map_result_dbname) )
+  -- aggregation of map results
+  local group_result = self.dbname .. ".group_result"
+  local map_result = db:mapreduce(map_result_dbname,
+                                  [[
+function(){
+  emit(this.key,this.value);
+};]],
+                                  [[
+function(key,values){
+  emit(values);
+};]],
+                                  {}, group_result)
+  -- create reduce tasks in mongo database, from aggregated map results
+  local r = assert( db:query(group_result) )
   for pair in r:results() do
     -- FIXME: check what happens when the insert is a duplicate of an existing
     -- key
@@ -174,6 +191,7 @@ function server_methods:prepare_reduce()
     -- broken execution and didn't belong to the current task execution
     assert( db:insert(red_dbname, make_task(pair.key,pair.values)) )
   end
+  db:drop_collection(group_result)
   set_job_status(self,"REDUCE")
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
   return make_task_coroutine_wrap(self, red_dbname)

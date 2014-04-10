@@ -8,6 +8,7 @@ local util = {
   DEFAULT_TMPNAME = "<NONE>",
   DEFAULT_DATE = 0,
   STATUS = { WAITING = 0, RUNNING = 1, BROKEN = 2, FINISHED = 3, },
+  MAX_PENDING_INSERTS = 1000,
 }
 
 -------------------------------------------------------------------------------

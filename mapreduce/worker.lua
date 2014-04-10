@@ -28,21 +28,18 @@ local function mark_as_finished(self,dbname,job)
                     false) )
 end
 
-local function group(self,key,value,dbname)
+local function process_pending_inserts(self,dbname)
   local db = self:connect()
-  assert( db:update(dbname,
-                    { key = key },
-                    {
-                      ["$push"] = { values = value },
-                    },
-                    true,    -- insert if not exists
-                    false) ) -- no multi-document
-              
+  assert( db:insert_batch(dbname, self.pending_inserts) )
+  self.pending_inserts = {}
+  collectgarbage("collect")
 end
 
 local function insert(self,key,value,dbname)
-  local db = self:connect()
-  assert( db:insert(dbname, { key = key, value = value }) )
+  table.insert(self.pending_inserts, { key=key, value=value })
+  if #self.pending_inserts > util.MAX_PENDING_INSERTS then
+    process_pending_inserts(self,dbname)
+  end
 end
 
 local function get_func(self, fname, args)
@@ -60,13 +57,12 @@ local function take_next_job(self)
   local job_dbname = self.job_dbname
   local tmpname = self.tmpname
   local t = os.time()
-  local dbname,fn,result_dbname,need_group=false
+  local dbname,fn,result_dbname
   local job_status = db:find_one(job_dbname) or "FINISHED"
   if job_status.job == "MAP" then
     dbname = job_status.map_tasks
     fn = get_func(self, job_status.mapfn, job_status.map_args)
     result_dbname = job_status.map_results
-    need_group=true
   elseif job_status.job == "REDUCE" then
     dbname = job_status.red_tasks
     fn = get_func(self, job_status.reducefn, job_status.reduce_args)
@@ -104,7 +100,7 @@ local function take_next_job(self)
   -- updated its data
   local one_job = db:find_one(dbname, set_query)
   if one_job then
-    return dbname,one_job,fn,result_dbname,need_group
+    return dbname,one_job,fn,result_dbname
   else
     return false
   end
@@ -138,7 +134,7 @@ function worker_methods:execute()
   while iter < MAX_ITER and njobs < MAX_JOBS do
     jobdone = false
     repeat
-      local dbname,job,fn,result_dbname,need_group = take_next_job(self)
+      local dbname,job,fn,result_dbname = take_next_job(self)
       if dbname then
         assert(dbname and job and fn and result_dbname)
         print("# EXECUTING JOB ", job._id, dbname, result_dbname)
@@ -146,20 +142,19 @@ function worker_methods:execute()
           collectgarbage("collect")
           local key,value = fn(job.key,job.value)
           if key ~= nil then
-            if need_group then
-              group(self,key,value,result_dbname)
-            else
-              insert(self,key,value,result_dbname)
-            end
+            insert(self,key,value,result_dbname)
           end
-        until key==nil
+        until key==nil -- repeat
         print("# \t FINISHED")
+        if #self.pending_inserts > 0 then
+          process_pending_inserts(self,dbname)
+        end
         mark_as_finished(self,dbname,job)
         jobdone = true
       else
         util.sleep(util.DEFAULT_SLEEP)
       end
-    until dbname == nil
+    until dbname == nil -- repeat
     if jobdone then
       print("# JOB DONE")
       iter       = 0
@@ -189,15 +184,18 @@ local worker_metatable = { __index = worker_methods,
                            __gc = function(self) os.remove(self.tmpname) end }
 
 worker.new = function(connection_string, dbname, auth_table)
-  local obj = { connection_string = connection_string,
-                dbname = assert(dbname, "Needs a dbname as 2nd argument"),
-                job_dbname = string.format("%s.job", dbname),
-                auth_table = auth_table,
-                tmpname = os.tmpname(),
-                funcs = {},
-                max_iter  = 20,
-                max_sleep = 20,
-                max_jobs  = 1, }
+  local obj = {
+    connection_string = connection_string,
+    dbname = assert(dbname, "Needs a dbname as 2nd argument"),
+    job_dbname = string.format("%s.job", dbname),
+    auth_table = auth_table,
+    tmpname = os.tmpname(),
+    funcs = {},
+    max_iter  = 20,
+    max_sleep = 20,
+    max_jobs  = 1,
+    pending_inserts = {},
+  }
   setmetatable(obj, worker_metatable)
   return obj
 end
