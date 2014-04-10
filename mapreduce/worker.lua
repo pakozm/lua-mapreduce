@@ -82,27 +82,28 @@ local function take_next_job(self)
       { status = STATUS.BROKEN, },
     },
   }
-  if db:count(dbname, query) > 0 then
-    local hostname = util.get_hostname()
-    assert( db:update(dbname, query,
-                      {
-                        ["$set"] = {
-                          tmpname = tmpname,
-                          started_at = t,
-                          status = STATUS.RUNNING,
-                        },
-                        ["$unset"] = {
-                          enqued_at = "",
-                        },
+  local hostname = util.get_hostname()
+  local set_query = {
+    worker = util.get_hostname(),
+    tmpname = tmpname,
+    started_at = t,
+    status = STATUS.RUNNING,
+  }
+  -- FIXME: check the write concern
+  assert( db:update(dbname, query,
+                    {
+                      ["$set"] = set_query,
+                      ["$unset"] = {
+                        enqued_at = "",
                       },
-                      false,    -- no create a new document if not exists
-                      false) )  -- only update the first match
-    local one_job = assert( db:find_one(dbname,
-                                        {
-                                          tmpname = tmpname,
-                                          started_at = t,
-                                          status = STATUS.RUNNING,
-                                        }) )
+                    },
+                    false,    -- no create a new document if not exists
+                    false) )  -- only update the first match
+  
+  -- FIXME: be careful, this call could fail if the secondary server don't has
+  -- updated its data
+  local one_job = db:find_one(dbname, set_query)
+  if one_job then
     return dbname,one_job,fn,result_dbname,need_group
   else
     return false
@@ -127,29 +128,60 @@ function worker_methods:connect()
 end
 
 function worker_methods:execute()
-  repeat
-    local dbname,job,fn,result_dbname,need_group = take_next_job(self)
-    if dbname then
-      assert(dbname and job and fn and result_dbname)
-      print("# EXECUTING JOB ", job._id, dbname, result_dbname)
-      repeat
-        collectgarbage("collect")
-        local key,value = fn(job.key,job.value)
-        if key ~= nil then
-          if need_group then
-            group(self,key,value,result_dbname)
-          else
-            insert(self,key,value,result_dbname)
+  local iter       = 0
+  local ITER_SLEEP = util.DEFAULT_SLEEP
+  local MAX_ITER   = self.max_iter
+  local MAX_SLEEP  = self.max_sleep
+  local MAX_JOBS   = self.max_jobs
+  local njobs      = 0
+  local jobdone
+  while iter < MAX_ITER and njobs < MAX_JOBS do
+    jobdone = false
+    repeat
+      local dbname,job,fn,result_dbname,need_group = take_next_job(self)
+      if dbname then
+        assert(dbname and job and fn and result_dbname)
+        print("# EXECUTING JOB ", job._id, dbname, result_dbname)
+        repeat
+          collectgarbage("collect")
+          local key,value = fn(job.key,job.value)
+          if key ~= nil then
+            if need_group then
+              group(self,key,value,result_dbname)
+            else
+              insert(self,key,value,result_dbname)
+            end
           end
-        end
-      until key==nil
-      print("# \t FINISHED")
-      mark_as_finished(self,dbname,job)
-    else
-      util.sleep(util.DEFAULT_SLEEP)
+        until key==nil
+        print("# \t FINISHED")
+        mark_as_finished(self,dbname,job)
+        jobdone = true
+      else
+        util.sleep(util.DEFAULT_SLEEP)
+      end
+    until dbname == nil
+    if jobdone then
+      print("# JOB DONE")
+      iter       = 0
+      ITER_SLEEP = util.DEFAULT_SLEEP
+      njobs      = njobs + 1
     end
-  until dbname == nil
-  print("# JOB DONE")
+    if njobs < MAX_JOBS then
+      print(string.format("# WAITING...\tnjobs: %d/%d\tit: %d/%d\tsleep: %.1f",
+                          njobs, MAX_JOBS, iter, MAX_ITER, ITER_SLEEP))
+      util.sleep(ITER_SLEEP)
+      ITER_SLEEP = math.min(MAX_SLEEP, ITER_SLEEP*1.5)
+    end
+    iter = iter + 1
+  end
+end
+
+function worker_methods:configure(t)
+  local inv = { max_iter=true, max_sleep=true, max_jobs=true }
+  for k,v in pairs(t) do
+    assert(inv[k], string.format("Unknown parameter: %s\n", k))
+    self[k] = v
+  end
 end
 
 -- WORKER METATABLE
@@ -162,7 +194,10 @@ worker.new = function(connection_string, dbname, auth_table)
                 job_dbname = string.format("%s.job", dbname),
                 auth_table = auth_table,
                 tmpname = os.tmpname(),
-                funcs = {} }
+                funcs = {},
+                max_iter  = 20,
+                max_sleep = 20,
+                max_jobs  = 1, }
   setmetatable(obj, worker_metatable)
   return obj
 end

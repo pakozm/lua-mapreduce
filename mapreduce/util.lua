@@ -107,6 +107,7 @@ local function make_task(key, value)
   return {
     key = tostring(key),
     value = value,
+    worker = util.DEFAULT_HOSTNAME,
     tmpname = util.DEFAULT_TMPNAME,
     enqued_at = os.time(),
     status = util.STATUS.WAITING,
