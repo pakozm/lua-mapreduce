@@ -31,74 +31,6 @@ local function iscallable(obj)
   return t == "function" or (t == "table" and (getmetatable(obj) or {}).__call)
 end
 
-local valid_get_table_fields_params_attributes = { type_match = true,
-                                                   mandatory  = true,
-                                                   getter     = true,
-                                                   default    = true }
-local function get_table_fields(params, t, ignore_other_fields)
-  local type   = type
-  local pairs  = pairs
-  local ipairs = ipairs
-  --
-  local params = params or {}
-  local t      = t or {}
-  local ret    = {}
-  for key,value in pairs(t) do
-    if not params[key] then
-      if ignore_other_fields then
-        ret[key] = value
-      else
-        error("Unknown field: " .. key)
-      end
-    end
-  end
-  for key,data in pairs(params) do
-    if params[key] then
-      local data = data or {}
-      for k,_ in pairs(data) do
-        if not valid_get_table_fields_params_attributes[k] then
-          error("Incorrect parameter to function get_table_fields: " .. k)
-        end
-      end
-      -- each param has type_match, mandatory, default, and getter
-      local v = t[key]
-      if v == nil then v = data.default end
-      if v == nil and data.mandatory then
-        error("Mandatory field not found: " .. key)
-      end
-      if v ~= nil and data.type_match and (type(v) ~= data.type_match) then
-        if data.type_match ~= "function" or not iscallable(v) then
-          error("Incorrect type '" .. type(v) .. "' for field '" .. key .. "'")
-        end
-      end
-      if data.getter then v=(t[key]~=nil and data.getter(t[key])) or nil end
-      ret[key] = v
-    end  -- if params[key] then ...
-  end -- for key,data in pairs(params) ...
-  return ret
-end
-
-local function get_table_fields_ipairs(...)
-  local arg = table.pack(...)
-  return function(t)
-    local table = table
-    local t   = t or {}
-    local ret = {}
-    for i,v in ipairs(t) do
-      table.insert(ret, get_table_fields(table.unpack(arg), v))
-    end
-    return ret
-  end
-end
-
-local function get_table_fields_recursive(...)
-  local arg = table.pack(...)
-  return function(t)
-    local t = t or {}
-    return get_table_fields(table.unpack(arg), t)
-  end
-end
-
 local function get_hostname()
   local p = io.popen("hostname","r")
   local hostname = p:read("*l")
@@ -136,54 +68,95 @@ end
 -- work (MAP,REDUCE,...) must perform
 local task = {}
 
-function task.create_collection(server,dbname,name)
-  local db = server:connect()
-  assert( db:update(dbname, { key = "unique" },
-                    { ["$set"] = { key         = "unique",
-                                   job         = name,
-                                   mapfn       = server.mapfn,
-                                   reducefn    = server.reducefn,
-                                   map_tasks   = server.map_dbname,
-                                   map_results = server.map_result_dbname,
-                                   red_tasks   = server.red_dbname,
-                                   red_results = server.red_result_dbname,
-                                   map_args    = server.map_args,
-                                   reduce_args = server.reduce_args,
-                    }, },
-                    true, false) )
-end
-
-function task:__call(server,dbname)
-  local db  = server:connect()
-  local obj = { server=server,
-                dbname = dbname,
-                status = db:find_one(dbname) }
+function task:__call(cnn)
+  local dbname = self.cnn:dbname()
+  local obj = {
+    server = server,
+    ns = cnn:dbname() .. ".task",
+    map_tasks_ns   = dbname .. ".map_tasks",
+    map_results_ns = dbname .. ".map_results",
+    red_tasks_ns   = dbname .. ".red_tasks",
+    red_results_ns = dbname .. ".red_results",                
+  }
   setmetatable(obj, { __index=self })
   return obj
 end
 setmetatable(task,task)
 
-function task:get_type()
-  return self.status.job
-end
-
-function task:set_type(name)
-  local db = self.server:connect()
-  local dbname = self.dbname
-  assert( db:update(dbname, { key = "unique" },
-                    { ["$set"] = { job = name } },
+function task:create_collection(job_type,params)
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { key = "unique" },
+                    { ["$set"] = {
+                        key         = "unique",
+                        job         = job_type,
+                        --
+                        mapfn       = params.mapfn,
+                        reducefn    = params.reducefn,
+                        map_args    = params.map_args,
+                        reduce_args = params.reduce_args,
+                        --
+                        map_tasks   = self.map_tasks_ns,
+                        map_results = self.map_results_ns,
+                        red_tasks   = self.red_tasks_ns,
+                        red_results = self.red_results_ns,
+                    }, },
                     true, false) )
 end
 
-function task:get_mapfn() return self.status.mapfn end
-function task:get_map_args() return self.status.map_args end
-function task:get_map_tasks() return self.status.map_tasks end
-function task:get_map_results() return self.status.map_results end
+function task:update()
+  local db = cnn:connect()
+  self.status = db:find_one(self.ns)
+  if self.status then
+    if self.status.job == "MAP" then
+      self.current_tasks_ns   = self.map_tasks_ns
+      self.current_results_ns = self.map_results_ns
+      self.current_fname = self.mapfn
+      self.current_args  = self.map_args
+    elseif self.status.job == "REDUCE" then
+      self.current_tasks_ns   = self.red_tasks_ns
+      self.current_results_ns = self.red_results_ns
+      self.current_fname = self.reducefn
+      self.current_args  = self.reduce_args
+    end
+  else
+    self.current_results_ns = nil
+    self.current_results_ns = nil
+    self.current_fname = nil
+    self.current_args  = nil
+  end
+end
 
-function task:get_redfn() return self.status.reducefn end
-function task:get_red_args() return self.status.reduce_args end
-function task:get_red_tasks() return self.status.red_tasks end
-function task:get_red_results() return self.status.red_results end
+function task:finished()
+  return not self.status or self.status.job == "FINISHED"
+end
+
+function task:get_job_type()
+  assert(self.status)
+  return self.status.job
+end
+
+function task:set_job_type(job_type)
+  local db = self.server:connect()
+  assert( db:update(self.ns, { key = "unique" },
+                    { ["$set"] = { job = job_type } },
+                    true, false) )
+end
+
+function task:get_tasks_ns()
+  return self.current_tasks_ns
+end
+
+function task:get_results_ns()
+  return self.current_results_ns
+end
+
+function task:get_fname()
+  return self.current_fname
+end
+
+function task:get_args()
+  return self.current_args
+end
 
 --------------------------------------------------------------------------------
 
@@ -192,6 +165,42 @@ local function tmpname_summary(tmpname)
 end
 
 --------------------------------------------------------------------------------
+
+function job:process_pending_inserts()
+  local db = self.cnn:connect()
+  assert( db:insert_batch(self.ns, self.pending_inserts) )
+  self.pending_inserts = {}
+  collectgarbage("collect")
+end
+
+function job:insert(key,value,dbname)
+  local t = os.time()
+  table.insert(self.pending_inserts, { key=key, value=value })
+  if #self.pending_inserts > util.MAX_PENDING_INSERTS then
+    process_pending_inserts(self,dbname)
+  end
+end
+
+local function get_func(self, fname, args)
+  local f = self.funcs[fname]
+  if not f then
+    f = require(fname)
+    if f.init then f.init(args) end
+    self.funcs[fname] = f
+    local k,v
+    repeat
+      k,v = debug.getupvalue (f.func, 1)
+    until not k or k == "_ENV"
+    assert(k == "_ENV")
+    -- emit function is inserted in the environment of the function
+    v.emit = function(key,value)
+      return self:insert(key,value,self.results_ns)
+    end
+  end
+  return f.func
+end
+
+--
 
 local job = {}
 
@@ -202,11 +211,17 @@ function job:__call()
 end
 setmetatable(job,job)
 
-function job:take_one(worker)
-  self.worker = worker
-  local db = worker:connect()
-  local dbname = self.dbname
-  local t = os.time()
+function job:take_next(task)
+  local db = self.cnn:connect()
+  local task_type = task:get_type()
+  if task_type == "WAIT" then
+    return false
+  elseif task_type == "FINISHED" then
+    return
+  end
+  self.tasks_ns   = task:get_tasks_ns()
+  self.results_ns = task:get_results_ns()
+  local t  = os.time()
   local query = {
     ["$or"] = {
       { status = STATUS.WAITING, },
@@ -229,7 +244,33 @@ function job:take_one(worker)
   -- FIXME: be careful, this call could fail if the secondary server don't has
   -- updated its data
   self.one_job = db:find_one(dbname, set_query)
-  if self.one_job then return true end
+  if self.one_job then
+    local fn
+    local g = get_func(self, task:get_fname(), task:get_args())
+    if task_type == "MAP" then
+      self.results_ns = self.results_ns .. "." .. self.one_job.key
+      fn = function()
+        g(self:pair())
+        if #self.pending_inserts > 0 then
+          self:process_pending_inserts()
+        end
+        self:mark_as_finished()
+      end
+    elseif task_type == "REDUCE" then
+      dbname = task:get_red_tasks()
+      result_dbname = job_status.red_results
+      fn = function()
+        local key,value = self:pair()
+        local value = g(key,value)
+        assert(value, "Reduce must return a value")
+        self:insert(key, value, task:get_results_ns())
+        if #self.pending_inserts > 0 then
+          self:process_pending_inserts()
+        end
+      end
+    end
+    return fn
+  end
 end
 
 function job:get_key()
@@ -266,6 +307,32 @@ end
 
 --------------------------------------------------------------------------------
 
+local cnn = {}
+
+function cnn:__call(connection_string, dbname, auth_table)
+  local obj = { connection_string = connection_string,
+                dbname = dbname,
+                auth_table = auth_table }
+  setmetatable(obj,self)
+  return obj
+end
+setmetatable(cnn,cnn)
+
+-- performs the connection, allowing to retrive a lost connection, and returns a
+-- dbclient object
+function cnn:connect()
+  if not self.db or self.db:is_failed() then
+    self.db = util.connect(self.connection_string, self.auth_table)
+  end
+  return self.db
+end
+
+function cnn:dbname()
+  return self.dbname
+end
+
+--------------------------------------------------------------------------------
+
 util.iscallable = iscallable
 util.get_table_fields = get_table_fields
 util.get_table_fields_ipairs = get_table_fields_ipairs
@@ -275,6 +342,6 @@ util.check_mapreduce_result = check_mapreduce_result
 util.sleep = sleep
 util.make_task = make_task
 util.task = task
-util.connect = connect
+util.cnn = cnn
 
 return util

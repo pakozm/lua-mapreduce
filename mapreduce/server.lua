@@ -1,4 +1,3 @@
-local mongo  = require "mongo"
 local util   = require "mapreduce.util"
 local server = {
   _VERSION = "0.1",
@@ -45,20 +44,6 @@ end
 
 -- removes all the tasks which are in WAITING or BROKEN states
 local function remove_pending_tasks(db,ns)
-  local r = db:mapreduce(ns,
-                         [[
-function() {
-  emit(this.worker + "." + this.tmpname,0);
-}]],
-                         [[
-function(key,values) {
-  return 0;
-}]],
-                         { })
-  for i,v in pairs(r) do print(i,v) end
-  if r.results then
-    for i,v in pairs(r.results) do print(i,v) end
-  end
   return db:remove(ns,
                    { ["$or"] = { { status = STATUS.BROKEN, },
                                  { status = STATUS.WAITING } } },
@@ -211,23 +196,23 @@ end
 
 function server_methods:drop_collections()
   local db = self:connect()
-  db:drop_collection(self.map_dbname)
-  db:drop_collection(self.map_result_dbname)
-  db:drop_collection(self.red_dbname)
-  db:drop_collection(self.red_result_dbname)
-  db:drop_collection(self.task_dbname)
+  local task = self.task
+  -- drop all the collections
+  for _,name in ipairs(db:get_collections(self.dbname)) do
+    db:drop_collection(name)
+  end
 end
 
 -- finalizer for the map-reduce process
-function server_methods:finalize()
-  local db = self:connect()
-  util.task(self,self.task_dbname):set_type("FINISHED")
-  local f = self.finalfn.func
-  f(db,self.red_result_dbname)
+function server_methods:final()
+  local task = self.task
+  task:set_type("FINISHED")
+  self.finalfn.func(self.cnn:connect(),
+                    task.red_results_ns)
   -- drop collections, except reduce result and task status
-  db:drop_collection(self.map_dbname)
-  db:drop_collection(self.map_result_dbname)
-  db:drop_collection(self.red_dbname)
+  db:drop_collection(task.map_tasks_ns)
+  db:drop_collection(task.map_results_ns)
+  db:drop_collection(task.red_tasks_ns)
   self.finished = true
 end
 
@@ -252,21 +237,18 @@ function server_methods:loop()
   end
   io.stderr:write("# FINAL execution\n")
   collectgarbage("collect")
-  self:finalize()
+  self:final()
 end
 
 -- SERVER METATABLE
 local server_metatable = { __index = server_methods }
 
 server.new = function(connection_string, dbname, auth_table)
-  local obj = { connection_string = connection_string,
-                dbname = assert(dbname, "Needs a dbname as 2nd argument"),
-                task_dbname = string.format("%s.task", dbname),
-                map_dbname = string.format("%s.map_tasks", dbname),
-                red_dbname = string.format("%s.red_tasks", dbname),
-                map_result_dbname = string.format("%s.map_results", dbname),
-                red_result_dbname = string.format("%s.red_results", dbname),
-                auth_table = auth_table, }
+  local cnn = util.cnn(connection_string, dbname, auth_table)
+  local obj = {
+    cnn  = cnn,
+    task = util.task(cnn),
+  }
   setmetatable(obj, server_metatable)
   return obj
 end
