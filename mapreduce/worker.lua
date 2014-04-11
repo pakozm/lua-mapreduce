@@ -9,25 +9,6 @@ local STATUS = util.STATUS
 
 -- PRIVATE FUNCTIONS
 
-local function mark_as_finished(self,dbname,job)
-  local db = self:connect()
-  assert( db:update(dbname,
-                    {
-                      _id = job._id,
-                    },
-                    {
-                      ["$set"] = {
-                        status = STATUS.FINISHED,
-                        finished_at = os.time(),
-                      },
-                      ["$unset"] = {
-                        started_at = "",
-                      },
-                    },
-                    false,
-                    false) )
-end
-
 local function process_pending_inserts(self,dbname)
   local db = self:connect()
   assert( db:insert_batch(dbname, self.pending_inserts) )
@@ -36,6 +17,7 @@ local function process_pending_inserts(self,dbname)
 end
 
 local function insert(self,key,value,dbname)
+  local t = os.time()
   table.insert(self.pending_inserts, { key=key, value=value })
   if #self.pending_inserts > util.MAX_PENDING_INSERTS then
     process_pending_inserts(self,dbname)
@@ -48,60 +30,51 @@ local function get_func(self, fname, args)
     f = require(fname)
     if f.init then f.init(args) end
     self.funcs[fname] = f
+    local k,v
+    repeat
+      k,v = debug.getupvalue (f.func, 1)
+    until not k or k == "_ENV"
+    assert(k == "_ENV")
+    -- emit function is inserted in the environment of the function
+    v.emit = function(key,value)
+      return self:emit(key,value)
+    end
   end
-  return coroutine.wrap(f.func)
+  return f.func
 end
 
 local function take_next_job(self)
-  local db = self:connect()
-  local job_dbname = self.job_dbname
-  local tmpname = self.tmpname
-  local t = os.time()
-  local dbname,fn,result_dbname
-  local job_status = db:find_one(job_dbname) or "FINISHED"
-  if job_status.job == "MAP" then
-    dbname = job_status.map_tasks
-    fn = get_func(self, job_status.mapfn, job_status.map_args)
-    result_dbname = job_status.map_results
-  elseif job_status.job == "REDUCE" then
-    dbname = job_status.red_tasks
-    fn = get_func(self, job_status.reducefn, job_status.reduce_args)
-    result_dbname = job_status.red_results
-  elseif job_status.job == "WAIT" then
+  local task_dbname = self.task_dbname
+  local task = util.task(self,task_dbname)
+  local task_type = task:get_type()
+  -- 
+  if task_type == "WAIT" then
     return false
-  else
+  elseif task_type == "FINISHED" then
     return
   end
-  local query = {
-    ["$or"] = {
-      { status = STATUS.WAITING, },
-      { status = STATUS.BROKEN, },
-    },
-  }
-  local hostname = util.get_hostname()
-  local set_query = {
-    worker = util.get_hostname(),
-    tmpname = tmpname,
-    started_at = t,
-    status = STATUS.RUNNING,
-  }
-  -- FIXME: check the write concern
-  assert( db:update(dbname, query,
-                    {
-                      ["$set"] = set_query,
-                      ["$unset"] = {
-                        enqued_at = "",
-                      },
-                    },
-                    false,    -- no create a new document if not exists
-                    false) )  -- only update the first match
-  
-  -- FIXME: be careful, this call could fail if the secondary server don't has
-  -- updated its data
-  local one_job = db:find_one(dbname, set_query)
-  if one_job then
-    return dbname,one_job,fn,result_dbname
+  --
+  local job = util.job()
+  if job:take_one() then
+    local dbname,result_dbname,fn
+    if task_type == "MAP" then
+      dbname = task:get_map_tasks()
+      result_dbname = task:get_map_results() .. "." .. job:get_key()
+      fn = get_func(self, task:get_mapfn(), task:get_map_args())
+    elseif job_status.job == "REDUCE" then
+      dbname = task:get_red_tasks()
+      result_dbname = job_status.red_results
+      local g = get_func(self, task:get_redfn(), task:get_red_args())
+      fn = function(key,value)
+        local value = g(key,value)
+        assert(value, "Reduce must return a value")
+        self:emit(key,value)
+      end
+    end
+    self:set_result(result_dbname)
+    return dbname, job, fn, result_dbname, task:get_type()
   else
+    self:set_result()
     return false
   end
 end
@@ -113,14 +86,18 @@ local worker_methods = {}
 -- dbclient object
 function worker_methods:connect()
   if not self.db or self.db:is_failed() then
-    local db = assert( mongo.Connection.New{ auto_reconnect=true,
-                                             rw_timeout=util.DEFAULT_RW_TIMEOUT} )
-    assert( db:connect(self.connection_string) )
-    if self.auth_table then db:auth(auth_table) end
-    assert( not db:is_failed(), "Impossible to connect :S" )
-    self.db = db
+    self.db = util.connect(self.connection_string, self.auth_table)
   end
   return self.db
+end
+
+function worker_methods:emit(key,value)
+  assert(self.result_dbname)
+  insert(self,key,value,self.result_dbname)
+end
+
+function worker:set_result(dbname)
+  self.result_dbname = dbname
 end
 
 function worker_methods:execute()
@@ -128,42 +105,38 @@ function worker_methods:execute()
   local ITER_SLEEP = util.DEFAULT_SLEEP
   local MAX_ITER   = self.max_iter
   local MAX_SLEEP  = self.max_sleep
-  local MAX_JOBS   = self.max_jobs
-  local njobs      = 0
-  local jobdone
-  while iter < MAX_ITER and njobs < MAX_JOBS do
-    jobdone = false
+  local MAX_TASKS  = self.max_tasks
+  local ntasks     = 0
+  local task_done
+  while iter < MAX_ITER and ntasks < MAX_TASKS do
     repeat
-      local dbname,job,fn,result_dbname = take_next_job(self)
+      collectgarbage("collect")
+      local dbname,job,fn,result_dbname,task_status = take_next_job(self)
       if dbname then
+        task_done = false
         assert(dbname and job and fn and result_dbname)
-        print("# EXECUTING JOB ", job._id, dbname, result_dbname)
-        repeat
-          collectgarbage("collect")
-          local key,value = fn(job.key,job.value)
-          if key ~= nil then
-            insert(self,key,value,result_dbname)
-          end
-        until key==nil -- repeat
+        print("# EXECUTING TASK ", job:get_id(), dbname, result_dbname)
+        local key,value = job:get_pair()
+        fn(key,value) -- MAP or REDUCE
         print("# \t FINISHED")
         if #self.pending_inserts > 0 then
-          process_pending_inserts(self,dbname)
+          process_pending_inserts(self,result_dbname)
         end
-        mark_as_finished(self,dbname,job)
-        jobdone = true
-      else
+        job:mark_as_finished()
+        task_done = true
+      else -- if dbname then ... else
         util.sleep(util.DEFAULT_SLEEP)
-      end
+      end -- if dbname then ... else ... end
     until dbname == nil -- repeat
-    if jobdone then
-      print("# JOB DONE")
+    if task_done then
+      print("# TASK DONE")
       iter       = 0
       ITER_SLEEP = util.DEFAULT_SLEEP
-      njobs      = njobs + 1
+      ntasks      = ntasks + 1
     end
-    if njobs < MAX_JOBS then
-      print(string.format("# WAITING...\tnjobs: %d/%d\tit: %d/%d\tsleep: %.1f",
-                          njobs, MAX_JOBS, iter, MAX_ITER, ITER_SLEEP))
+    if ntasks < MAX_TASKS then
+      print(string.format("# WAITING...\tntasks: %d/%d\tit: %d/%d\tsleep: %.1f",
+                          ntasks, MAX_TASKS, iter, MAX_ITER, ITER_SLEEP))
       util.sleep(ITER_SLEEP)
       ITER_SLEEP = math.min(MAX_SLEEP, ITER_SLEEP*1.5)
     end
@@ -172,7 +145,7 @@ function worker_methods:execute()
 end
 
 function worker_methods:configure(t)
-  local inv = { max_iter=true, max_sleep=true, max_jobs=true }
+  local inv = { max_iter=true, max_sleep=true, max_tasks=true }
   for k,v in pairs(t) do
     assert(inv[k], string.format("Unknown parameter: %s\n", k))
     self[k] = v
@@ -187,13 +160,13 @@ worker.new = function(connection_string, dbname, auth_table)
   local obj = {
     connection_string = connection_string,
     dbname = assert(dbname, "Needs a dbname as 2nd argument"),
-    job_dbname = string.format("%s.job", dbname),
+    task_dbname = string.format("%s.task", dbname),
     auth_table = auth_table,
     tmpname = os.tmpname(),
     funcs = {},
     max_iter  = 20,
     max_sleep = 20,
-    max_jobs  = 1,
+    max_tasks  = 1,
     pending_inserts = {},
   }
   setmetatable(obj, worker_metatable)
