@@ -1,4 +1,6 @@
-local util   = require "mapreduce.util"
+local utils  = require "mapreduce.utils"
+local job    = require "mapreduce.job"
+local task   = require "mapreduce.task"
 local server = {
   _VERSION = "0.1",
   _NAME = "mapreduce.server",
@@ -210,9 +212,9 @@ function server_methods:final()
   self.finalfn.func(self.cnn:connect(),
                     task.red_results_ns)
   -- drop collections, except reduce result and task status
-  db:drop_collection(task.map_tasks_ns)
+  db:drop_collection(task.map_jobs_ns)
   db:drop_collection(task.map_results_ns)
-  db:drop_collection(task.red_tasks_ns)
+  db:drop_collection(task.red_jobs_ns)
   self.finished = true
 end
 
@@ -247,7 +249,7 @@ server.new = function(connection_string, dbname, auth_table)
   local cnn = util.cnn(connection_string, dbname, auth_table)
   local obj = {
     cnn  = cnn,
-    task = util.task(cnn),
+    task = task(cnn),
   }
   setmetatable(obj, server_metatable)
   return obj

@@ -1,4 +1,6 @@
-local util   = require "mapreduce.util"
+local utils  = require "mapreduce.utils"
+local job    = require "mapreduce.job"
+local task   = require "mapreduce.task"
 local worker = {
   _VERSION = "0.1",
   _NAME = "mapreduce.worker",
@@ -65,8 +67,8 @@ worker.new = function(connection_string, dbname, auth_table)
   local cnn = util.cnn(connection_string, dbname, auth_table),
   local obj = {
     cnn     = cnn,
-    task    = util.task(cnn),
-    job     = util.job(cnn)
+    task    = task(cnn),
+    job     = job(cnn)
     tmpname = os.tmpname(),
     --
     max_iter   = 20,
