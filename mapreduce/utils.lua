@@ -21,7 +21,7 @@ local utils = {
     MAP      = "MAP",
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
-  }
+  },
   MAX_PENDING_INSERTS = 50000,
   MAX_NUMBER_OF_TASKS = 14000,
 }
@@ -57,7 +57,7 @@ local function check_mapreduce_result(res)
 end
 
 local function sleep(n)
-  print("SLEEP ",n)
+  -- print("SLEEP ",n)
   os.execute("sleep " .. tonumber(n))
 end
 
@@ -65,7 +65,7 @@ end
 local function make_job(key, value)
   assert(key~=nil and value~=nil, "Needs a key and a value")
   return {
-    key = tostring(key) or error("Key must be convertible to string"),
+    _id = tostring(key) or error("Key must be convertible to string"),
     value = value,
     worker = utils.DEFAULT_HOSTNAME,
     tmpname = utils.DEFAULT_TMPNAME,
@@ -73,10 +73,6 @@ local function make_job(key, value)
     status = utils.STATUS.WAITING,
     groupped = false,
   }
-end
-
-local function tmpname_summary(tmpname)
-  return tmpname:match("([^/]+)$")
 end
 
 --------------------------------------------------------------------------------
@@ -89,5 +85,6 @@ utils.get_hostname = get_hostname
 utils.check_mapreduce_result = check_mapreduce_result
 utils.sleep = sleep
 utils.make_job = make_job
+utils.connect = connect
 
 return utils

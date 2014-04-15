@@ -1,9 +1,8 @@
 return {
   init = function() end,
-  func = function(db,ns)
-    local q = db:query(ns,{})
-    for pair in q:results() do
-      print(pair.value, pair.key)
+  func = function(query)
+    for pair in query:results() do
+      print(pair.value, pair._id)
     end
   end
 }

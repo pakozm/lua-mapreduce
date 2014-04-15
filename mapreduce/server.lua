@@ -1,27 +1,29 @@
-local utils  = require "mapreduce.utils"
-local task   = require "mapreduce.task"
 local server = {
   _VERSION = "0.1",
   _NAME = "mapreduce.server",
 }
 
-local DEFAULT_HOSTNAME = util.DEFAULT_HOSTNAME
-local DEFAULT_IP = util.DEFAULT_IP
-local DEFAULT_DATE = util.DEFAULT_DATE
-local STATUS = util.STATUS
+local utils  = require "mapreduce.utils"
+local task   = require "mapreduce.task"
+local cnn    = require "mapreduce.cnn"
+
+local DEFAULT_HOSTNAME = utils.DEFAULT_HOSTNAME
+local DEFAULT_IP = utils.DEFAULT_IP
+local DEFAULT_DATE = utils.DEFAULT_DATE
+local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
 
-local make_task = utils.make_task
+local make_job = utils.make_job
 
 -- PRIVATE FUNCTIONS
 
 -- returns a coroutine.wrap which returns true until all tasks are finished
 local function make_task_coroutine_wrap(self,ns)
-  local db = self:connect()
+  local db = self.cnn:connect()
   local N = db:count(ns)
   return coroutine.wrap(function()
                           repeat
-                            local db = self:connect()
+                            local db = self.cnn:connect()
                             local M = db:count(ns, { status = STATUS.FINISHED })
                             if M then
                               io.stderr:write(string.format("\r%6.1f %% ",
@@ -90,9 +92,7 @@ function server_methods:configure(params)
   self.mapfn = params.mapfn
   self.reducefn = params.reducefn
   -- create task object
-  local task_obj = task(self.cnn)
-  task_obj:create_collection(TASK_STATUS.WAIT, params)
-  self.task = task_obj
+  self.task:create_collection(TASK_STATUS.WAIT, params)
 end
 
 -- insert the job in the mongo db and returns a coroutine ready to be executed
@@ -114,7 +114,7 @@ function server_methods:prepare_map()
     
     -- FIXME: check how to process task keys which are defined by a previously
     -- broken execution and didn't belong to the current task execution
-    assert( db:insert(map_jobs_ns, make_task(key,value)) )
+    assert( db:insert(map_jobs_ns, make_job(key,value)) )
   end
   self.task:set_task_status(TASK_STATUS.MAP)
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
@@ -149,7 +149,7 @@ function(key,values){
     return { v : result };
 };
 ]]
-  for name in task:map_results_iterator() do
+  for name in self.task:map_results_iterator() do
     local r = db:mapreduce(name, mongo_map_fn, mongo_red_fn,
                            {}, group_result)
     db:drop_collection(name)
@@ -164,12 +164,12 @@ function(key,values){
     -- broken execution and didn't belong to the current task execution
     local key,value = pair._id, pair.value
     assert( type(value)  == "table" and value.v )
-    assert( db:insert(red_jobs_ns, make_task(key,value.v)) )
+    assert( db:insert(red_jobs_ns, make_job(key,value.v)) )
   end
   db:drop_collection(dbname .. "." .. group_result)
   self.task:set_task_status(TASK_STATUS.REDUCE)
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
-  return make_task_coroutine_wrap(self, red_ns)
+  return make_task_coroutine_wrap(self, red_jobs_ns)
 end
 
 function server_methods:drop_collections()
@@ -183,9 +183,11 @@ end
 
 -- finalizer for the map-reduce process
 function server_methods:final()
+  local db = self.cnn:connect()
   local task = self.task
   task:set_task_status(TASK_STATUS.FINISHED)
-  self.finalfn.func(self.cnn:connect(), task:get_red_results_ns())
+  local q = db:query(task:get_red_results_ns(),{})
+  self.finalfn.func(q)
   -- drop collections, except reduce result and task status
   db:drop_collection(task:get_map_jobs_ns())
   db:drop_collection(task:get_map_results_ns())
@@ -201,7 +203,7 @@ function server_methods:loop()
   collectgarbage("collect")
   io.stderr:write("# MAP execution\n")
   while do_map_step() do
-    util.sleep(util.DEFAULT_SLEEP)
+    utils.sleep(utils.DEFAULT_SLEEP)
     collectgarbage("collect")
   end
   io.stderr:write("# Preparing REDUCE\n")
@@ -209,7 +211,7 @@ function server_methods:loop()
   collectgarbage("collect")
   io.stderr:write("# REDUCE execution\n")
   while do_reduce_step() do
-    util.sleep(util.DEFAULT_SLEEP)
+    utils.sleep(utils.DEFAULT_SLEEP)
     collectgarbage("collect")
   end
   io.stderr:write("# FINAL execution\n")
@@ -241,7 +243,7 @@ server.utest = function(connection_string, dbname, auth_table)
   s.configured = true
   s.mapfn      = "dummy"
   s.reducefn   = "dummy"
-  util.task.create_collection(s,s.task_ns,"WAIT")
+  utils.task.create_collection(s,s.task_ns,"WAIT")
   -- TODO: check the task_status
   -----------------------------
   assert(s.connection_string == connection_string)

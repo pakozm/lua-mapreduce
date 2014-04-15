@@ -5,12 +5,13 @@ local job = {
   _NAME = "job",
 }
 
+local STATUS = utils.STATUS
 
 -- PRIVATE METHODS
 
 -- the jobs are processed in batches, when a batch is ready, this function
 -- inserts all the batch results in the database
-local function job_process_pending_results(self)
+local function job_process_pending_inserts(self)
   local db = self.cnn:connect()
   assert( db:insert_batch(self.results_ns, self.pending_inserts) )
   self.pending_inserts = {}
@@ -27,31 +28,33 @@ end
 
 -- loads the required Lua module, sets the upvalue for the "emit" function,
 -- executes init function if needed, and returns the resulting function
+local funcs = { }
 local function job_get_func(self, fname, args)
-  local f = self.funcs[fname]
+  local f = funcs[fname]
   if not f then
-    f = require(fname)
-    if f.init then f.init(args) end
-    self.funcs[fname] = f
+    f = { m = require(fname) }
+    if f.m.init then f.m.init(args) end
+    funcs[fname] = f
     local k,v
     repeat
-      k,v = debug.getupvalue (f.func, 1)
+      k,v = debug.getupvalue (f.m.func, 1)
     until not k or k == "_ENV"
     assert(k == "_ENV")
     -- emit function is inserted in the environment of the function
-    v.emit = function(key,value)
-      return job_insert_result(self, key, value)
-    end
+    f.upvalue = v
   end
-  return f.func
+  f.upvalue.emit = function(key, value)
+    return job_insert_result(self, key, value)
+  end
+  return f.m.func
 end
 
-local function job_mark_as_finished(self, job)
-  assert(job.job_tbl)
+local function job_mark_as_finished(self)
+  assert(self.job_tbl)
   local db = self.cnn:connect()
-  assert( db:update(job.jobs_ns,
+  assert( db:update(self.jobs_ns,
                     {
-                      _id = job:get_id(),
+                      _id = self:get_id(),
                     },
                     {
                       ["$set"] = {
@@ -65,50 +68,8 @@ end
 
 -- PUBLIC METHODS
 
--- constructor, receives a connection and a task instance
-function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns)
-  local obj = {
-    cnn = cnn,
-    job_tbl = job_tbl,
-    jobs_ns = jobs_ns,
-    results_ns = results_ns,
-    pending_inserts = {},
-    funcs = {}
-  }
-  setmetatable(obj,self)
-  --
-  local fn
-  local g = job_get_func(obj, fname, args)
-  if task_status == "MAP" then
-    obj.results_ns = obj.results_ns .. "." .. obj.job_tbl.key
-    fn = function()
-      g(obj:pair()) -- executes the MAP/REDUCE function
-      if #obj.pending_inserts > 0 then
-        job_process_pending_inserts(obj)
-      end
-      job_mark_as_finished(obj)
-    end
-  elseif task_status == "REDUCE" then
-    fn = function()
-      local key,value = obj:pair()
-      local value = g(key,value) -- executes the MAP/REDUCE function
-      assert(value, "Reduce must return a value")
-      local db = obj.cnn:connect()
-      db:insert(obj.results_ns, { key=key, value=value })
-    end
-  end
-  obj.fn = fn
-  return obj
-end
-setmetatable(job,job)
-
 function job:execute()
   return self.fn()
-end
-
-function job:get_key()
-  assert(self.job_tbl)
-  return self.job_tbl.key
 end
 
 function job:get_id()
@@ -118,11 +79,49 @@ end
 
 function job:get_pair()
   assert(self.job_tbl)
-  return self.job_tbl.key,self.job_tbl.value
+  return self.job_tbl._id,self.job_tbl.value
 end
 
 function job:status_string()
-  return job:get_id()
+  return self:get_id()
 end
+
+-- constructor, receives a connection and a task instance
+function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns)
+  local obj = {
+    cnn = cnn,
+    job_tbl = job_tbl,
+    jobs_ns = jobs_ns,
+    results_ns = results_ns,
+    pending_inserts = {},
+  }
+  setmetatable(obj, { __index=self })
+  --
+  local fn
+  local g = job_get_func(obj, fname, args)
+  local key,value = obj:get_pair()
+  if task_status == "MAP" then
+    obj.results_ns = obj.results_ns .. ".K" .. key
+    fn = function()
+      g(key,value) -- executes the MAP/REDUCE function
+      if #obj.pending_inserts > 0 then
+        job_process_pending_inserts(obj)
+      end
+      job_mark_as_finished(obj)
+    end
+  elseif task_status == "REDUCE" then
+    fn = function()
+      local value = g(key,value) -- executes the MAP/REDUCE function
+      assert(value, "Reduce must return a value")
+      local db = obj.cnn:connect()
+      print(obj.results_ns, key, value)
+      db:insert(obj.results_ns, { _id=key, value=value })
+      job_mark_as_finished(obj)
+    end
+  end
+  obj.fn = fn
+  return obj
+end
+setmetatable(job,job)
 
 return job

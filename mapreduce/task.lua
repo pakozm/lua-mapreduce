@@ -11,44 +11,31 @@ local STATUS      = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
 
 -- PRIVATE FUNCIONS
-
--- set key to be a unique index
-local function ensure_unique_index(db,ns)
-  assert(db:ensure_index(ns, { key = 1 }, true))
+local function tmpname_summary(tmpname)
+  return tmpname:match("([^/]+)$")
 end
 
--- set key to be an index
-local function ensure_index(db,ns)
-  assert(db:ensure_index(ns, { key = 1 }, false))
+local function task_set_task_status(self, status, tbl)
+  self.tbl = tbl or {}
+  self.tbl.status = status
+  if self.tbl.status == TASK_STATUS.MAP then
+    self.current_jobs_ns = self.map_jobs_ns
+    self.current_results_ns = self.map_results_ns
+    self.current_fname = self.tbl.mapfn
+    self.current_args  = self.tbl.map_args
+  elseif self.tbl.status == TASK_STATUS.REDUCE  then
+    self.current_jobs_ns = self.red_jobs_ns
+    self.current_results_ns = self.red_results_ns
+    self.current_fname = self.tbl.reducefn
+    self.current_args  = self.tbl.reduce_args
+  end
 end
 
 -- PUBLIC METHODS
 
-function task:__call(cnn)
-  local dbname = self.cnn:get_dbname()
-  local obj = {
-    cnn = cnn,
-    ns = cnn:get_dbname() .. ".task",
-    map_jobs_ns    = dbname .. ".map_jobs",
-    map_results_ns = dbname .. ".map_results",
-    red_jobs_ns    = dbname .. ".red_jobs",
-    red_results_ns = dbname .. ".red_results",                
-  }
-  setmetatable(obj, { __index=self })
-  --
-  local db = self.cnn:connect()
-  ensure_unique_index(db, self.ns)
-  ensure_unique_index(db, self.map_jobs_ns)
-  ensure_unique_index(db, self.red_jobs_ns)
-  ensure_unique_index(db, self.red_results_ns)
-  --
-  return obj
-end
-setmetatable(task,task)
-
 function task:map_results_iterator()
   local db = self.cnn:connect()
-  local all_collections = db:get_collections(dbname)
+  local all_collections = db:get_collections(self.cnn:get_dbname())
   local i=0
   return function()
     while i < #all_collections do
@@ -63,29 +50,23 @@ end
 
 function task:create_collection(task_status, params)
   local db = self.cnn:connect()
-  assert( db:update(self.ns, { key = "unique" },
+  assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = {
-                        key         = "unique",
                         status      = task_status,
                         --
                         mapfn       = params.mapfn,
                         reducefn    = params.reducefn,
                         map_args    = params.map_args,
                         reduce_args = params.reduce_args,
-                        --
-                        map_tasks   = self.map_jobs_ns,
-                        map_results = self.map_results_ns,
-                        red_tasks   = self.red_jobs_ns,
-                        red_results = self.red_results_ns,
                     }, },
                     true, false) )
 end
 
 function task:update()
-  local db = cnn:connect()
+  local db = self.cnn:connect()
   local tbl = db:find_one(self.ns)
   if tbl then
-    task:set_task_status(tbl.status)
+    task_set_task_status(self, tbl.status, tbl)
   else
     self.current_results_ns = nil
     self.current_results_ns = nil
@@ -108,23 +89,11 @@ function task:get_task_status()
 end
 
 function task:set_task_status(status)
-  local db = self.server:connect()
-  assert( db:update(self.ns, { key = "unique" },
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = { status = status } },
                     true, false) )
-  self.tbl = {}
-  self.tbl.status = status
-  if self.tbl.status == TASK_STATUS.MAP then
-    self.current_jobs_ns = self.map_jobs_ns
-    self.current_results_ns = self.map_results_ns
-    self.current_fname = self.mapfn
-    self.current_args  = self.map_args
-  elseif self.tbl.status == TASK_STATUS.REDUCE  then
-    self.current_jobs_ns = self.red_jobs_ns
-    self.current_results_ns = self.red_results_ns
-    self.current_fname = self.reducefn
-    self.current_args  = self.reduce_args
-  end
+  task_set_task_status(self, status)
 end
 
 function task:get_task_ns()
@@ -181,7 +150,7 @@ function task:insert_default_job(key, value)
 end
 
 -- workers use this method to load a new job in the caller object
-function task:take_next_job()
+function task:take_next_job(tmpname)
   local db = self.cnn:connect()
   local task_status = self:get_task_status()
   if task_status == TASK_STATUS.WAIT then
@@ -202,7 +171,7 @@ function task:take_next_job()
   }
   local set_query = {
     worker = utils.get_hostname(),
-    tmpname = tmpname_summary(worker.tmpname),
+    tmpname = tmpname_summary(tmpname),
     time = t,
     status = STATUS.RUNNING,
   }
@@ -218,7 +187,7 @@ function task:take_next_job()
   local job_tbl = db:find_one(jobs_ns, set_query)
   if job_tbl then
     return task_status,job(self.cnn, job_tbl, task_status,
-                           task:get_fname(), task:get_args(),
+                           self:get_fname(), self:get_args(),
                            jobs_ns, results_ns)
     
   else -- if self.one_job then ...
@@ -236,5 +205,22 @@ function task:take_next_job()
     return TASK_STATUS.WAIT -- the worker needs to wait
   end -- if self.one_job then ... else ...
 end
+
+function task:__call(cnn)
+  local dbname = cnn:get_dbname()
+  local obj = {
+    cnn = cnn,
+    ns = dbname .. ".task",
+    map_jobs_ns    = dbname .. ".map_jobs",
+    map_results_ns = dbname .. ".map_results",
+    red_jobs_ns    = dbname .. ".red_jobs",
+    red_results_ns = dbname .. ".red_results",                
+  }
+  setmetatable(obj, { __index=self })
+  --
+  local db = obj.cnn:connect()
+  return obj
+end
+setmetatable(task,task)
 
 return task

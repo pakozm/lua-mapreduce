@@ -6,7 +6,7 @@ local reducefn = table.remove(arg, 1)
 local finalfn  = table.remove(arg, 1)
 --
 local server = require "mapreduce.server"
-local util = require "mapreduce.util"
+local utils = require "mapreduce.utils"
 local s = server.new(connection_string, dbname)
 s:configure{
   taskfn      = taskfn,
@@ -18,5 +18,5 @@ s:configure{
   reduce_args = arg,
   final_args  = arg,
 }
-util.sleep(10)
+utils.sleep(10)
 s:loop()
