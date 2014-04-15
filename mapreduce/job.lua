@@ -5,7 +5,29 @@ local job = {
   _NAME = "job",
 }
 
-local function get_func(self, fname, args)
+
+-- PRIVATE METHODS
+
+-- the jobs are processed in batches, when a batch is ready, this function
+-- inserts all the batch results in the database
+local function job_process_pending_results(self)
+  local db = self.cnn:connect()
+  assert( db:insert_batch(self.results_ns, self.pending_inserts) )
+  self.pending_inserts = {}
+  collectgarbage("collect")
+end
+
+local function job_insert_result(self,key,value)
+  local t = os.time()
+  table.insert(self.pending_inserts, { key=key, value=value })
+  if #self.pending_inserts > utils.MAX_PENDING_INSERTS then
+    job_process_pending_inserts(self)
+  end
+end
+
+-- loads the required Lua module, sets the upvalue for the "emit" function,
+-- executes init function if needed, and returns the resulting function
+local function job_get_func(self, fname, args)
   local f = self.funcs[fname]
   if not f then
     f = require(fname)
@@ -18,139 +40,18 @@ local function get_func(self, fname, args)
     assert(k == "_ENV")
     -- emit function is inserted in the environment of the function
     v.emit = function(key,value)
-      return self:insert(key,value,self.results_ns)
+      return job_insert_result(self, key, value)
     end
   end
   return f.func
 end
 
---
-
-function job:__call()
-  local obj = { }
-  setmetatable(obj,self)
-  return obj
-end
-setmetatable(job,job)
-
--- PRIVATE METHODS
-
-local function job_process_pending_results(self)
+local function job_mark_as_finished(self, job)
+  assert(job.job_tbl)
   local db = self.cnn:connect()
-  assert( db:insert_batch(self.ns, self.pending_inserts) )
-  self.pending_inserts = {}
-  collectgarbage("collect")
-end
-
-local function job_insert_result(self,key,value,dbname)
-  local t = os.time()
-  table.insert(self.pending_inserts, { key=key, value=value })
-  if #self.pending_inserts > utils.MAX_PENDING_INSERTS then
-    job_process_pending_inserts(self,dbname)
-  end
-end
-
--- PUBLIC METHODS
-
-function job:make_job(task,key,value)
-  assert(key~=nil and value~=nil, "Needs a key and a value")
-  local job_tbl ={
-    key = tostring(key) or error("Key must be convertible to string"),
-    value = value,
-    worker = utils.DEFAULT_HOSTNAME,
-    tmpname = utils.DEFAULT_TMPNAME,
-    time = os.time(),
-    status = utils.STATUS.WAITING,
-    groupped = false,
-  }
-  local db = self.cnn:connect()
-  db:insert(task:get_jobs_ns(), job_tbl)
-  self.one_job = nil
-end
-
-function job:take_next(task)
-  local db = self.cnn:connect()
-  local task_type = task:get_type()
-  if task_type == "WAIT" then
-    return false
-  elseif task_type == "FINISHED" then
-    return
-  end
-  self.jobs_ns    = task:get_jobs_ns()
-  self.results_ns = task:get_results_ns()
-  local t  = os.time()
-  local query = {
-    ["$or"] = {
-      { status = STATUS.WAITING, },
-      { status = STATUS.BROKEN, },
-    },
-  }
-  local set_query = {
-    worker = utils.get_hostname(),
-    tmpname = tmpname_summary(worker.tmpname),
-    time = t,
-    status = STATUS.RUNNING,
-  }
-  -- FIXME: check the write concern
-  assert( db:update(dbname, query,
+  assert( db:update(job.jobs_ns,
                     {
-                      ["$set"] = set_query,
-                    },
-                    false,    -- no create a new document if not exists
-                    false) )  -- only update the first match
-  -- FIXME: be careful, this call could fail if the secondary server don't has
-  -- updated its data
-  self.one_job = db:find_one(dbname, set_query)
-  if self.one_job then
-    local fn
-    local g = get_func(self, task:get_fname(), task:get_args())
-    if task_type == "MAP" then
-      self.results_ns = self.results_ns .. "." .. self.one_job.key
-      fn = function()
-        g(self:pair())
-        if #self.pending_inserts > 0 then
-          self:process_pending_inserts()
-        end
-        self:mark_as_finished()
-      end
-    elseif task_type == "REDUCE" then
-      dbname = task:get_red_tasks()
-      result_dbname = job_status.red_results
-      fn = function()
-        local key,value = self:pair()
-        local value = g(key,value)
-        assert(value, "Reduce must return a value")
-        self:insert(key, value, task:get_results_ns())
-        if #self.pending_inserts > 0 then
-          self:process_pending_inserts()
-        end
-      end
-    end
-    return fn
-  end
-end
-
-function job:get_key()
-  assert(self.one_job)
-  return self.one_job.key
-end
-
-function job:get_id()
-  assert(self.one_job)
-  return self.one_job._id
-end
-
-function job:get_pair()
-  assert(self.one_job)
-  return self.one_job.key,self.one_job.value
-end
-
-function job:mark_as_finished()
-  assert(self.one_job)
-  local db = self.worker:connect()
-  assert( db:update(dbname,
-                    {
-                      _id = self.one_job._id,
+                      _id = job:get_id(),
                     },
                     {
                       ["$set"] = {
@@ -160,6 +61,68 @@ function job:mark_as_finished()
                     },
                     false,
                     false) )
+end
+
+-- PUBLIC METHODS
+
+-- constructor, receives a connection and a task instance
+function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns)
+  local obj = {
+    cnn = cnn,
+    job_tbl = job_tbl,
+    jobs_ns = jobs_ns,
+    results_ns = results_ns,
+    pending_inserts = {},
+    funcs = {}
+  }
+  setmetatable(obj,self)
+  --
+  local fn
+  local g = job_get_func(obj, fname, args)
+  if task_status == "MAP" then
+    obj.results_ns = obj.results_ns .. "." .. obj.job_tbl.key
+    fn = function()
+      g(obj:pair()) -- executes the MAP/REDUCE function
+      if #obj.pending_inserts > 0 then
+        job_process_pending_inserts(obj)
+      end
+      job_mark_as_finished(obj)
+    end
+  elseif task_status == "REDUCE" then
+    fn = function()
+      local key,value = obj:pair()
+      local value = g(key,value) -- executes the MAP/REDUCE function
+      assert(value, "Reduce must return a value")
+      local db = obj.cnn:connect()
+      db:insert(obj.results_ns, { key=key, value=value })
+    end
+  end
+  obj.fn = fn
+  return obj
+end
+setmetatable(job,job)
+
+function job:execute()
+  return self.fn()
+end
+
+function job:get_key()
+  assert(self.job_tbl)
+  return self.job_tbl.key
+end
+
+function job:get_id()
+  assert(self.job_tbl)
+  return self.job_tbl._id
+end
+
+function job:get_pair()
+  assert(self.job_tbl)
+  return self.job_tbl.key,self.job_tbl.value
+end
+
+function job:status_string()
+  return job:get_id()
 end
 
 return job

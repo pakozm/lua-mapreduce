@@ -9,8 +9,21 @@ local utils = {
   DEFAULT_HOSTNAME = "<unknown>",
   DEFAULT_TMPNAME = "<NONE>",
   DEFAULT_DATE = 0,
-  STATUS = { WAITING = 0, RUNNING = 1, BROKEN = 2, FINISHED = 3, },
+  STATUS = {
+    WAITING = 0,  -- default job status
+    RUNNING = 1,  -- status when a worker is running the job
+    BROKEN = 2,   -- a job which is detected as broken
+    FINISHED = 3, -- a finished job
+    GROUPED = 4,  -- a finished job which results has been grouped
+  },
+  TASK_STATUS = {
+    WAIT     = "WAIT",
+    MAP      = "MAP",
+    REDUCE   = "REDUCE",
+    FINISHED = "FINISHED",
+  }
   MAX_PENDING_INSERTS = 50000,
+  MAX_NUMBER_OF_TASKS = 14000,
 }
 
 local STATUS = utils.STATUS

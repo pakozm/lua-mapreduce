@@ -22,7 +22,7 @@ function cnn:connect()
   return self.db
 end
 
-function cnn:dbname()
+function cnn:get_dbname()
   return self.dbname
 end
 

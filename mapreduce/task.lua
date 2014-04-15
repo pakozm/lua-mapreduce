@@ -5,27 +5,68 @@ local task = {
   _NAME = "task",
 }
 
+local utils       = require "mapreduce.utils"
+local job         = require "mapreduce.job"
+local STATUS      = utils.STATUS
+local TASK_STATUS = utils.TASK_STATUS
+
+-- PRIVATE FUNCIONS
+
+-- set key to be a unique index
+local function ensure_unique_index(db,ns)
+  assert(db:ensure_index(ns, { key = 1 }, true))
+end
+
+-- set key to be an index
+local function ensure_index(db,ns)
+  assert(db:ensure_index(ns, { key = 1 }, false))
+end
+
+-- PUBLIC METHODS
+
 function task:__call(cnn)
-  local dbname = self.cnn:dbname()
+  local dbname = self.cnn:get_dbname()
   local obj = {
-    server = server,
-    ns = cnn:dbname() .. ".task",
+    cnn = cnn,
+    ns = cnn:get_dbname() .. ".task",
     map_jobs_ns    = dbname .. ".map_jobs",
     map_results_ns = dbname .. ".map_results",
     red_jobs_ns    = dbname .. ".red_jobs",
     red_results_ns = dbname .. ".red_results",                
   }
   setmetatable(obj, { __index=self })
+  --
+  local db = self.cnn:connect()
+  ensure_unique_index(db, self.ns)
+  ensure_unique_index(db, self.map_jobs_ns)
+  ensure_unique_index(db, self.red_jobs_ns)
+  ensure_unique_index(db, self.red_results_ns)
+  --
   return obj
 end
 setmetatable(task,task)
 
-function task:create_collection(job_type,params)
+function task:map_results_iterator()
+  local db = self.cnn:connect()
+  local all_collections = db:get_collections(dbname)
+  local i=0
+  return function()
+    while i < #all_collections do
+      i=i+1
+      local name = all_collections[i]
+      if name:match("%.map_results%.") then
+        return name
+      end
+    end
+  end
+end
+
+function task:create_collection(task_status, params)
   local db = self.cnn:connect()
   assert( db:update(self.ns, { key = "unique" },
                     { ["$set"] = {
                         key         = "unique",
-                        job         = job_type,
+                        status      = task_status,
                         --
                         mapfn       = params.mapfn,
                         reducefn    = params.reducefn,
@@ -42,41 +83,68 @@ end
 
 function task:update()
   local db = cnn:connect()
-  self.status = db:find_one(self.ns)
-  if self.status then
-    if self.status.job == "MAP" then
-      self.current_jobs_ns   = self.map_jobs_ns
-      self.current_results_ns = self.map_results_ns
-      self.current_fname = self.mapfn
-      self.current_args  = self.map_args
-    elseif self.status.job == "REDUCE" then
-      self.current_jobs_ns   = self.red_jobs_ns
-      self.current_results_ns = self.red_results_ns
-      self.current_fname = self.reducefn
-      self.current_args  = self.reduce_args
-    end
+  local tbl = db:find_one(self.ns)
+  if tbl then
+    task:set_task_status(tbl.status)
   else
     self.current_results_ns = nil
     self.current_results_ns = nil
     self.current_fname = nil
     self.current_args  = nil
   end
+  self.tbl = tbl
 end
 
 function task:finished()
-  return not self.status or self.status.job == "FINISHED"
+  return not self.tbl or self.tbl.status == TASK_STATUS.FINISHED
 end
 
-function task:get_job_type()
-  assert(self.status)
-  return self.status.job
+function task:get_task_status()
+  if self.tbl then
+    return self.tbl.status
+  else
+    return TASK_STATUS.FINISHED
+  end
 end
 
-function task:set_job_type(job_type)
+function task:set_task_status(status)
   local db = self.server:connect()
   assert( db:update(self.ns, { key = "unique" },
-                    { ["$set"] = { job = job_type } },
+                    { ["$set"] = { status = status } },
                     true, false) )
+  self.tbl = {}
+  self.tbl.status = status
+  if self.tbl.status == TASK_STATUS.MAP then
+    self.current_jobs_ns = self.map_jobs_ns
+    self.current_results_ns = self.map_results_ns
+    self.current_fname = self.mapfn
+    self.current_args  = self.map_args
+  elseif self.tbl.status == TASK_STATUS.REDUCE  then
+    self.current_jobs_ns = self.red_jobs_ns
+    self.current_results_ns = self.red_results_ns
+    self.current_fname = self.reducefn
+    self.current_args  = self.reduce_args
+  end
+end
+
+function task:get_task_ns()
+  return self.ns
+end
+
+function task:get_map_jobs_ns()
+  return self.map_jobs_ns
+end
+
+function task:get_red_jobs_ns()
+  return self.red_jobs_ns
+end
+
+function task:get_map_results_ns()
+  return self.map_results_ns
+end
+
+function task:get_red_results_ns()
+  return self.red_results_ns
 end
 
 function task:get_jobs_ns()
@@ -93,6 +161,80 @@ end
 
 function task:get_args()
   return self.current_args
+end
+
+-- JOB INTERFACE
+
+-- inserts a default job at the data base
+function task:insert_default_job(key, value)
+  assert(key~=nil and value~=nil, "Needs a key and a value")
+  local job_tbl ={
+    key = tostring(key) or error("Key must be convertible to string"),
+    value = value,
+    worker = utils.DEFAULT_HOSTNAME,
+    tmpname = utils.DEFAULT_TMPNAME,
+    time = os.time(),
+    status = utils.STATUS.WAITING,
+  }
+  local db = self.cnn:connect()
+  db:insert(self:get_jobs_ns(), job_tbl)
+end
+
+-- workers use this method to load a new job in the caller object
+function task:take_next_job()
+  local db = self.cnn:connect()
+  local task_status = self:get_task_status()
+  if task_status == TASK_STATUS.WAIT then
+    return TASK_STATUS.WAIT -- the worker needs to wait for jobs being ready
+  elseif task_status == TASK_STATUS.FINISHED then
+    return TASK_STATUS.FINISHED -- all jobs are done
+  end
+  -- take note of the name spaces for jobs and results
+  local jobs_ns    = self:get_jobs_ns()
+  local results_ns = self:get_results_ns()
+  -- ask mongo to take a free job by setting its data
+  local t = os.time()
+  local query = {
+    ["$or"] = {
+      { status = STATUS.WAITING, },
+      { status = STATUS.BROKEN, },
+    },
+  }
+  local set_query = {
+    worker = utils.get_hostname(),
+    tmpname = tmpname_summary(worker.tmpname),
+    time = t,
+    status = STATUS.RUNNING,
+  }
+  -- FIXME: check the write concern
+  assert( db:update(jobs_ns, query,
+                    {
+                      ["$set"] = set_query,
+                    },
+                    false,    -- no create a new document if not exists
+                    false) )  -- only update the first match
+  -- FIXME: be careful, this call could fail if the secondary server don't has
+  -- updated its data
+  local job_tbl = db:find_one(jobs_ns, set_query)
+  if job_tbl then
+    return task_status,job(self.cnn, job_tbl, task_status,
+                           task:get_fname(), task:get_args(),
+                           jobs_ns, results_ns)
+    
+  else -- if self.one_job then ...
+    -- the job (if taken) will be freed, making it available to other worker
+    assert( db:update(jobs_ns, set_query,
+                      {
+                        ["$set"] = {
+                          worker = utils.DEFAULT_HOSTNAME,
+                          tmpname = utils.DEFAULT_TMPNAME,
+                          status = STATUS.WAITING,
+                        },
+                      },
+                      false,    -- no create a new document if not exists
+                      false) )  -- only update the first match    
+    return TASK_STATUS.WAIT -- the worker needs to wait
+  end -- if self.one_job then ... else ...
 end
 
 return task
