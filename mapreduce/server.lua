@@ -137,7 +137,7 @@ function server_methods:prepare_reduce()
   local mongo_map_fn = [[
 function() {
     emit(this.key, { v : [ this.value ] });
-};]]
+}]]
   local mongo_red_fn = [[
 function(key,values){
     var result = [];
@@ -147,11 +147,17 @@ function(key,values){
         });
     });
     return { v : result };
-};
-]]
+}]]
   for name in self.task:map_results_iterator() do
-    local r = db:mapreduce(name, mongo_map_fn, mongo_red_fn,
-                           {}, group_result)
+    local collection = name:match("^[^%.]+%.(.+)$")
+    assert(db:eval(dbname,
+                   string.format([[
+function() {
+  db.%s.mapReduce(%s, %s, { out : { reduce : "%s" } });
+};
+]], collection, mongo_map_fn, mongo_red_fn, group_result)))
+    --local r = db:mapreduce(name, mongo_map_fn, mongo_red_fn,
+    --                       {}, group_result)
     db:drop_collection(name)
   end
   -- create reduce tasks in mongo database, from aggregated map results
@@ -186,8 +192,9 @@ function server_methods:final()
   local db = self.cnn:connect()
   local task = self.task
   task:set_task_status(TASK_STATUS.FINISHED)
-  local q = db:query(task:get_red_results_ns(),{})
-  self.finalfn.func(q)
+  local results_ns = task:get_red_results_ns()
+  local q = db:query(results_ns, {})
+  self.finalfn.func(q, db, results_ns)
   -- drop collections, except reduce result and task status
   db:drop_collection(task:get_map_jobs_ns())
   db:drop_collection(task:get_map_results_ns())

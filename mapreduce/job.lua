@@ -114,7 +114,6 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns)
       local value = g(key,value) -- executes the MAP/REDUCE function
       assert(value, "Reduce must return a value")
       local db = obj.cnn:connect()
-      print(obj.results_ns, key, value)
       db:insert(obj.results_ns, { _id=key, value=value })
       job_mark_as_finished(obj)
     end

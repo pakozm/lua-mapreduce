@@ -64,7 +64,7 @@ end
 
 function task:update()
   local db = self.cnn:connect()
-  local tbl = db:find_one(self.ns)
+  local tbl = db:find_one(self.ns, { _id = "unique" })
   if tbl then
     task_set_task_status(self, tbl.status, tbl)
   else
