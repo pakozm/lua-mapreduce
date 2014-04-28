@@ -11,6 +11,6 @@ is stored at auxiliary mongoDB collections.
 This software depends in:
 
 - [Lua 5.2](http://www.lua.org/)
-- [pabloromeu/luamongo](https://github.com/pabloromeu/luamongo/), a fork of 
+- [pakozm/luamongo](https://github.com/pakozm/luamongo/), a fork of 
   [moai/luamongo](https://github.com/moai/luamongo) for Lua 5.2 and with minor
   improvements.
