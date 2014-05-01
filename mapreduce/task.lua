@@ -134,6 +134,25 @@ end
 
 -- JOB INTERFACE
 
+function task:finished_jobs_iterator()
+  local db          = self.cnn:connect()
+  local map_jobs_ns = self:get_map_jobs_ns()
+  local cursor      = db:query(map_jobs_ns, { status = STATUS.FINISHED })
+  local task_status = self:get_task_status()
+  local jobs_ns     = self:get_jobs_ns()
+  local results_ns  = self:get_results_ns()
+  return function()
+    local job_tbl = cursor:next()
+    if job_tbl then
+      local job_obj = job(self.cnn, job_tbl, task_status,
+                          self:get_fname(), self:get_args(),
+                          jobs_ns, results_ns,
+                          true) -- not_executable=true
+      return job_obj:get_results_ns(),job_obj
+    end
+  end
+end
+
 -- inserts a default job at the data base
 function task:insert_default_job(key, value)
   assert(key~=nil and value~=nil, "Needs a key and a value")

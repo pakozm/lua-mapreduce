@@ -71,7 +71,6 @@ local function make_job(key, value)
     tmpname = utils.DEFAULT_TMPNAME,
     time = os.time(),
     status = utils.STATUS.WAITING,
-    groupped = false,
   }
 end
 
