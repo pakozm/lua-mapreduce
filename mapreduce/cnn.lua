@@ -1,3 +1,4 @@
+local mongo = require "mongo"
 local utils = require "mapreduce.utils"
 
 local cnn   = {
@@ -14,13 +15,24 @@ function cnn:connect()
   return self.db
 end
 
+function cnn:gridfs()
+  local db = self:connect()
+  local gridfs = assert( mongo.GridFS.New(db, self.gridfs_dbname) )
+  return gridfs
+end
+
 function cnn:get_dbname()
+  return self.dbname
+end
+
+function cnn:get_gridfs_dbname()
   return self.dbname
 end
 
 function cnn:__call(connection_string, dbname, auth_table)
   local obj = { connection_string = connection_string,
                 dbname = dbname,
+                gridfs_dbname = dbname .. "_fs",
                 auth_table = auth_table }
   setmetatable(obj, { __index=self })
   return obj

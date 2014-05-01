@@ -3,6 +3,8 @@ local server = {
   _NAME = "mapreduce.server",
 }
 
+local grp_tmp_dir = "/tmp/grouped"
+
 local utils  = require "mapreduce.utils"
 local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
@@ -15,7 +17,7 @@ local TASK_STATUS = utils.TASK_STATUS
 
 local make_job = utils.make_job
 
--- PRIVATE FUNCTIONS
+-- PRIVATE FUNCTIONS AND METHODS
 
 -- returns a coroutine.wrap which returns true until all tasks are finished
 local function make_task_coroutine_wrap(self,ns)
@@ -24,7 +26,7 @@ local function make_task_coroutine_wrap(self,ns)
   return coroutine.wrap(function()
                           repeat
                             local db = self.cnn:connect()
-                            local M = db:count(ns, { status = STATUS.FINISHED })
+                            local M = db:count(ns, { status = STATUS.FINISHED }) + db:count(ns, { status = STATUS.GROUPED })
                             if M then
                               io.stderr:write(string.format("\r%6.1f %% ",
                                                             M/N*100))
@@ -47,6 +49,293 @@ end
 -- removes all the tasks at the given collection
 local function remove_collection_data(db,ns)
   return db:remove(ns, {}, false)
+end
+
+local function escape(str)
+  if type(str) == "number" then
+    return tostring(str)
+  else
+    str = assert(tostring(str),"Unable to convert to string map value")
+    return ( string.format("%q",str):gsub("\\\n","\\n") )
+  end
+end
+
+local function serialize_table_ipairs(t)
+  local result = {}
+  for _,v in ipairs(t) do
+    table.insert(result, escape(v))
+  end
+  return string.format("{%s}",table.concat(result, ","))
+end
+
+local function serialize_sorted_by_lines(f,result)
+  local keys = {} for k,_ in pairs(result) do table.insert(keys,k) end
+  table.sort(keys)
+  for _,key in ipairs(keys) do
+    local key_str = escape(key)
+    local value_str = serialize_table_ipairs(result[key])
+    f:write(string.format("return %s,%s\n", key_str, value_str))
+  end
+end
+
+
+-- insert the job in the mongo db and returns a coroutine ready to be executed
+-- as an iterator
+local function server_prepare_map(self)
+  local db = self.cnn:connect()
+  local map_jobs_ns = self.task:get_map_jobs_ns()
+  remove_pending_tasks(db, map_jobs_ns)
+  -- create map tasks in mongo database
+  local f = self.taskfn.func
+  local count = 0
+  for key,value in coroutine.wrap(f) do
+    count = count + 1
+    assert(count < utils.MAX_NUMBER_OF_TASKS,
+           "Overflow maximum number of tasks: " .. utils.MAX_NUMBER_OF_TASKS)
+    assert(tostring(key), "taskfn must return a string key")
+    -- FIXME: check what happens when the insert is a duplicate of an existing
+    -- key
+    
+    -- FIXME: check how to process task keys which are defined by a previously
+    -- broken execution and didn't belong to the current task execution
+    assert( db:insert(map_jobs_ns, make_job(key,value)) )
+  end
+  self.task:set_task_status(TASK_STATUS.MAP)
+  -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
+  return make_task_coroutine_wrap(self, map_jobs_ns)
+end
+
+-- aggregates all the map jobs which are finished
+local function server_group_finished_maps(self)
+  local db     = self.cnn:connect()
+  local gridfs = self.cnn:gridfs()
+  local task   = self.task
+  for results_ns,job in task:finished_jobs_iterator() do
+    local result = {}
+    for r in db:query(results_ns):results() do
+      local key,value = r.key,r.value
+      result[key] = (result[key] or {})
+      table.insert(result[key], value)
+    end
+    local tmpname = os.tmpname()
+    local f = io.open(tmpname,"w")
+    serialize_sorted_by_lines(f,result)
+    f:close()
+    gridfs:store_file(tmpname, string.format("%s/%s",grp_tmp_dir,results_ns))
+    os.remove(tmpname)
+    job:mark_as_grouped()
+    db:drop_collection(results_ns)
+  end
+end
+
+-- iterates over all the lines of a given gridfs filename, and returns the first
+-- and last chunks where the line is contained, and the first and last position
+-- inside the corresponding chunks
+local function gridfs_lines_iterator(gridfs, filename)
+  local gridfile = gridfs:find_file(filename)
+  local current_chunk = 0
+  local current_pos   = 1
+  local num_chunks    = gridfile:num_chunks()
+  local chunk
+  return function()
+    collectgarbage("collect")
+    if current_chunk < num_chunks then
+      local chunk = chunk or gridfile:chunk(current_chunk)
+      if current_pos < chunk:len() then
+        local first_chunk = current_chunk
+        local last_chunk  = current_chunk
+        local first_chunk_pos = current_pos
+        local last_chunk_pos = current_pos
+        local tbl = {}
+        local found_line = false
+        repeat
+          chunk = chunk or gridfile:chunk(current_chunk)
+          local data  = chunk:data()
+          local match = data:match("^([^\n]*)\n", current_pos)
+          if match then
+            table.insert(tbl, match)
+            current_pos = #match + current_pos + 1 -- +1 because of the \n
+            found_line = true
+          else -- if match ... then
+            -- inserts the whole chunk substring, no \n match found
+            table.insert(tbl, data:sub(current_pos, chunk:len()))
+            current_pos = chunk:len() + 1 -- forces to go next chunk
+          end -- if match ... then else ...
+          last_chunk_pos = current_pos - 1
+          last_chunk = current_chunk
+          -- go to next chunk if we are at the end
+          if current_pos > chunk:len() then
+            current_chunk = current_chunk + 1
+            current_pos   = 1
+            chunk         = nil
+          end
+          -- avoids to process empty lines
+          if first_chunk == last_chunk and last_chunk_pos-first_chunk_pos < 2 then
+            found_line      = false
+            first_chunk     = current_chunk
+            last_chunk      = current_chunk
+            first_chunk_pos = current_pos
+            last_chunk_pos  = current_pos
+          end
+          --
+        until found_line or current_chunk >= num_chunks
+        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos
+      end -- if current_pos < chunk:len() ...
+    end -- if current_chunk < gridfile:num_chunks() ...
+  end -- return function()
+end
+
+local function get_key_from_line(line)
+  local key,value = load(line)()
+  return key
+end
+
+local function merge_gridfs_files(gridfs, filenames, result_filename)
+  local tmpname = os.tmpname()
+  local f = io.open(tmpname, "w")
+  -- initializes all the line iterators (one for each file)
+  local line_iterators = {}
+  for _,name in ipairs(filenames) do
+    table.insert(line_iterators, gridfs_lines_iterator(gridfs,name))
+  end
+  local finished = false
+  local data = {}
+  -- take the next data of a given file number
+  local take_next = function(which)
+    if line_iterators[which] then
+      local line = line_iterators[which]()
+      if line then
+        data[which] = data[which] or {}
+        data[which][3],data[which][1],data[which][2] = line,load(line)()
+      else
+        data[which] = nil
+        line_iterators[which] = nil
+      end
+    else
+      data[which] = nil
+    end
+  end
+  -- we finished when all the data is nil
+  local finished = function()
+    local ret = true
+    for i=1,#filenames do
+      if data[i] ~= nil then ret = false break end
+    end
+    return ret
+  end
+  -- look for all the data which has equal key
+  local search_equals = function()
+    local key
+    local list = {}
+    for i=1,#filenames do
+      if data[i] then
+        if not key or data[i][1] <= key then
+          if not key or data[i][1] < key then list = {} end
+          table.insert(list,i)
+          key = data[i][1]
+        end
+      end
+    end
+    return list
+  end
+  -- initialize data with first line over all files
+  for i=1,#filenames do take_next(i) end
+  -- merge all the files until finished
+  while not finished() do
+    local equals_list = search_equals()
+    if #equals_list == 1 then
+      f:write(data[equals_list[1]][3])
+      f:write("\n")
+      take_next(equals_list[1])
+    else
+      collectgarbage("collect")
+      local key_str = escape(data[equals_list[1]][1])
+      local result = {}
+      for _,which in ipairs(equals_list) do
+        for _,v in ipairs(data[which][2]) do
+          table.insert(result, v)
+        end
+        take_next(which)
+      end
+      local value_str = serialize_table_ipairs(result)
+      f:write(string.format("return %s,%s\n",key_str,value_str))
+    end
+  end
+  f:close()
+  gridfs:store_file(tmpname, result_filename)
+  os.remove(tmpname)
+end
+
+-- insert the job in the mongo db and returns a coroutine
+local function server_prepare_reduce(self)
+  local db     = self.cnn:connect()
+  local gridfs = self.cnn:gridfs()
+  local dbname = self.cnn:get_dbname()
+  local red_jobs_ns = self.task:get_red_jobs_ns()
+  remove_pending_tasks(db, red_jobs_ns)
+  -- group all map results
+  local group_result = "group_result"
+  local filenames = {}
+  for obj in gridfs:list():results() do
+    local filename = obj.filename
+    if filename:match(string.format("^%s",grp_tmp_dir)) then
+      table.insert(filenames, filename)
+    end
+  end
+  merge_gridfs_files(gridfs, filenames, group_result)
+  -- create reduce jobs in mongo database, from aggregated map results. reduce
+  -- jobs are described as a position in a gridfs file
+  local pending_inserts = {}
+  for line, first_chunk, last_chunk, first_chunk_pos, last_chunk_pos in
+  gridfs_lines_iterator(gridfs, group_result) do
+    local key   = get_key_from_line(line)
+    local value = {
+      file = group_result,
+      first_chunk = first_chunk,
+      last_chunk = last_chunk,
+      first_chunk_pos = first_chunk_pos,
+      last_chunk_pos = last_chunk_pos,
+    }
+    table.insert(pending_inserts, make_job(key,value))
+    if #pending_inserts >= utils.MAX_PENDING_INSERTS then
+      db:insert_batch(red_jobs_ns, pending_inserts)
+      pending_inserts = {}
+    end
+  end
+  if #pending_inserts > 0 then
+    db:insert_batch(red_jobs_ns, pending_inserts)
+    pending_inserts = {}
+  end
+  self.task:set_task_status(TASK_STATUS.REDUCE)
+  -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
+  return make_task_coroutine_wrap(self, red_jobs_ns)
+end
+
+local function server_drop_collections(self)
+  local db = self:connect()
+  local dbname = db:get_dbname()
+  -- drop all the collections
+  for _,name in ipairs(db:get_collections(dbname)) do
+    db:drop_collection(name)
+  end
+end
+
+-- finalizer for the map-reduce process
+local function server_final(self)
+  local db = self.cnn:connect()
+  local task = self.task
+  task:set_task_status(TASK_STATUS.FINISHED)
+  local results_ns = task:get_red_results_ns()
+  local q = db:query(results_ns, {})
+  self.finalfn.func(q, db, results_ns)
+  -- drop collections, except reduce result and task status
+  db:drop_collection(task:get_map_jobs_ns())
+  db:drop_collection(task:get_map_results_ns())
+  db:drop_collection(task:get_red_jobs_ns())
+  db:drop_collection(task:get_red_results_ns())
+  local gridfs = self.cnn:gridfs()
+  for v in gridfs:list():results() do gridfs:remove_file(v.filename) end
+  self.finished = true
 end
 
 -- SERVER METHODS
@@ -95,126 +384,22 @@ function server_methods:configure(params)
   self.task:create_collection(TASK_STATUS.WAIT, params)
 end
 
--- insert the job in the mongo db and returns a coroutine ready to be executed
--- as an iterator
-function server_methods:prepare_map()
-  local db = self.cnn:connect()
-  local map_jobs_ns = self.task:get_map_jobs_ns()
-  remove_pending_tasks(db, map_jobs_ns)
-  -- create map tasks in mongo database
-  local f = self.taskfn.func
-  local count = 0
-  for key,value in coroutine.wrap(f) do
-    count = count + 1
-    assert(count < utils.MAX_NUMBER_OF_TASKS,
-           "Overflow maximum number of tasks: " .. utils.MAX_NUMBER_OF_TASKS)
-    assert(tostring(key), "taskfn must return a string key")
-    -- FIXME: check what happens when the insert is a duplicate of an existing
-    -- key
-    
-    -- FIXME: check how to process task keys which are defined by a previously
-    -- broken execution and didn't belong to the current task execution
-    assert( db:insert(map_jobs_ns, make_job(key,value)) )
-  end
-  self.task:set_task_status(TASK_STATUS.MAP)
-  -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
-  return make_task_coroutine_wrap(self, map_jobs_ns)
-end
-
--- insert the job in the mongo db and returns a coroutine
-function server_methods:prepare_reduce()
-  local db = self.cnn:connect()
-  local dbname = self.cnn:get_dbname()
-  local map_jobs_ns = self.task:get_map_jobs_ns()
-  local map_result_ns = self.task:get_map_results_ns()
-  local red_jobs_ns = self.task:get_red_jobs_ns()
-  remove_pending_tasks(db, red_jobs_ns)
-  -- aggregation of map results
-  
-  -- FIXME: this aggregation procedure only allows to generate 16M document
-  -- sizes
-  local group_result = "group_result"
-  local mongo_map_fn = [[
-function() {
-    emit(this.key, { v : [ this.value ] });
-}]]
-  local mongo_red_fn = [[
-function(key,values){
-    var result = [];
-    values.forEach(function(d) {
-        d.v.forEach(function(a) {
-            result.push(a);
-        });
-    });
-    return { v : result };
-}]]
-  for name in self.task:map_results_iterator() do
-    local collection = name:match("^[^%.]+%.(.+)$")
-    assert(db:eval(dbname,
-                   string.format([[
-function() {
-  db.%s.mapReduce(%s, %s, { out : { reduce : "%s" } });
-};
-]], collection, mongo_map_fn, mongo_red_fn, group_result)))
-    --local r = db:mapreduce(name, mongo_map_fn, mongo_red_fn,
-    --                       {}, group_result)
-    db:drop_collection(name)
-  end
-  -- create reduce tasks in mongo database, from aggregated map results
-  local r = assert( db:query(dbname .. "." .. group_result) )
-  for pair in r:results() do
-    -- FIXME: check what happens when the insert is a duplicate of an existing
-    -- key
-    
-    -- FIXME: check how to process task keys which are defined by a previously
-    -- broken execution and didn't belong to the current task execution
-    local key,value = pair._id, pair.value
-    assert( type(value)  == "table" and value.v )
-    assert( db:insert(red_jobs_ns, make_job(key,value.v)) )
-  end
-  db:drop_collection(dbname .. "." .. group_result)
-  self.task:set_task_status(TASK_STATUS.REDUCE)
-  -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
-  return make_task_coroutine_wrap(self, red_jobs_ns)
-end
-
-function server_methods:drop_collections()
-  local db = self:connect()
-  local dbname = db:get_dbname()
-  -- drop all the collections
-  for _,name in ipairs(db:get_collections(dbname)) do
-    db:drop_collection(name)
-  end
-end
-
--- finalizer for the map-reduce process
-function server_methods:final()
-  local db = self.cnn:connect()
-  local task = self.task
-  task:set_task_status(TASK_STATUS.FINISHED)
-  local results_ns = task:get_red_results_ns()
-  local q = db:query(results_ns, {})
-  self.finalfn.func(q, db, results_ns)
-  -- drop collections, except reduce result and task status
-  db:drop_collection(task:get_map_jobs_ns())
-  db:drop_collection(task:get_map_results_ns())
-  db:drop_collection(task:get_red_jobs_ns())
-  self.finished = true
-end
-
 -- makes all the map-reduce process, looping into the coroutines until all tasks
 -- are done
 function server_methods:loop()
   io.stderr:write("# Preparing MAP\n")
-  local do_map_step = self:prepare_map()
+  local do_map_step = server_prepare_map(self)
   collectgarbage("collect")
   io.stderr:write("# MAP execution\n")
   while do_map_step() do
     utils.sleep(utils.DEFAULT_SLEEP)
+    server_group_finished_maps(self)
     collectgarbage("collect")
   end
+  server_group_finished_maps(self)
+  collectgarbage("collect")
   io.stderr:write("# Preparing REDUCE\n")
-  local do_reduce_step = self:prepare_reduce()
+  local do_reduce_step = server_prepare_reduce(self)
   collectgarbage("collect")
   io.stderr:write("# REDUCE execution\n")
   while do_reduce_step() do
@@ -223,7 +408,7 @@ function server_methods:loop()
   end
   io.stderr:write("# FINAL execution\n")
   collectgarbage("collect")
-  self:final()
+  server_final(self)
 end
 
 -- SERVER METATABLE
@@ -243,86 +428,79 @@ end
 ------------------------------ UNIT TEST -----------------------------------
 ----------------------------------------------------------------------------
 server.utest = function(connection_string, dbname, auth_table)
-  local connection_string = connection_string or "localhost"
-  local dbname = dbname or "tmp"
-  -- check server connection
-  local s = server.new(connection_string, dbname, auth_table)
-  s.configured = true
-  s.mapfn      = "dummy"
-  s.reducefn   = "dummy"
-  utils.task.create_collection(s,s.task_ns,"WAIT")
-  -- TODO: check the task_status
-  -----------------------------
-  assert(s.connection_string == connection_string)
-  assert(s.dbname == dbname)
-  assert(s.map_ns == dbname .. ".map_tasks")
-  assert(s.map_result_ns == dbname .. ".map_results")
-  assert(s.red_ns == dbname .. ".red_tasks")
-  assert(s.red_result_ns == dbname .. ".red_results")
-  assert(s.task_ns == dbname .. ".task")
-  local db = assert(s:connect())
-  assert(s.db)
-  assert(db:find_one(s.task_ns).job == "WAIT")
-  -- clean previous failed tests
-  db:drop_collection(s.map_ns)
-  db:drop_collection(s.map_result_ns)
-  db:drop_collection(s.red_ns)
-  -- check prepare_map
-  s.taskfn = {
-    func = function()
-      for i=1,10 do coroutine.yield(i,{ file=i }) end
-    end
+  -- check serialization of map results
+  local f = {
+    write = function(self,str)
+      self.tbl = self.tbl or {}
+      table.insert(self.tbl,str)
+    end,
+    concat = function(self) return table.concat(self.tbl or {}) end,
   }
-  local do_map_step = s:prepare_map()
-  assert(db:find_one(s.task_ns).job == "MAP")
-  assert(do_map_step)
-  assert(db:count(s.map_ns, { status = STATUS.WAITING }) == 10)
-  assert(do_map_step())
-  assert(do_map_step())
-  assert(db:update(s.map_ns, {},
-                   { ["$set"] = { status = STATUS.FINISHED } },
-                   false, true))
-  assert(db:count(s.map_ns, { status = STATUS.FINISHED }) == 10)
-  assert(not do_map_step())
-  remove_collection_data(db,s.map_ns)
-  -- check prepare_reduce
-  db:insert(s.map_result_ns, { key="one", values={ 4, 5, 1, 3 } })
-  db:insert(s.map_result_ns, { key="two", values={ 1, 2, 3 } })
-  local do_red_step = s:prepare_reduce()
-  assert(db:find_one(s.task_ns).job == "REDUCE")
-  assert(do_red_step)
-  assert(db:count(s.red_ns, { status = STATUS.WAITING }) == 2)
-  assert(do_red_step())
-  assert(do_red_step())
-  assert(db:update(s.red_ns, {},
-                   { ["$set"] = { status = STATUS.FINISHED } },
-                   false, true))
-  assert(db:count(s.red_ns, { status = STATUS.FINISHED }) == 2)
-  assert(not do_red_step())
-  remove_collection_data(db,s.red_ns)
-  db:drop_collection(s.map_result_ns)
-  -- finalize
-  db:insert(s.red_result_ns, { key="one", value=13 })
-  db:insert(s.red_result_ns, { key="two", value=6 })
-  s.finalfn = {
-    func = function(db,red_result_ns)
-      local r = assert(db:query(red_result_ns, {}))
-      assert(r:itcount() == 2)
-      for pair in r:results() do
-        if pair.key == "one" then
-          assert(pair.value == 13)
-        elseif pair.key == "two" then
-          assert(pair.value == 6)
-        else
-          error("Incorrect key: " .. pair.key)
-        end
-      end
-    end
+  serialize_sorted_by_lines(f,{
+                              KEY1 = {1,1,1,1,1},
+                              KEY2 = {1,1,1},
+                              KEY3 = {1},
+                              KEY4 = { "hello\nworld" }
+                              })
+  local result = [[return "KEY1",{1,1,1,1,1}
+return "KEY2",{1,1,1}
+return "KEY3",{1}
+return "KEY4",{"hello\nworld"}
+]]
+  assert(f:concat() == result)
+  -- check lines iterator over gridfs
+  local cnn = cnn("localhost", "tmp")
+  local db = cnn:connect()
+  local gridfs = cnn:gridfs()
+  local tmpname = os.tmpname()
+  local f = io.open(tmpname, "w")
+  f:write("first line\n")
+  f:write("second line\n")
+  f:write("third line\n")
+  -- a large line, through multiple chunks
+  for i=1,2^22 do
+    f:write(string.format("a%d",i))
+  end
+  f:write("\n")
+  f:close()
+  gridfs:store_file(tmpname,tmpname)
+  local f = io.open(tmpname)
+  for g_line in gridfs_lines_iterator(gridfs,tmpname) do
+    local f_line = f:read("*l")
+    assert(g_line == f_line)
+  end
+  os.remove(tmpname)
+  -- check merge over several filenames
+  local N=3
+  local list_tmpnames = {} for i=1,N do list_tmpnames[i] = os.tmpname() end
+  local list_files = {}
+  for i,name in ipairs(list_tmpnames) do list_files[i]=io.open(name,"w") end
+  -- FILE 1
+  list_files[1]:write('return "a",{1,1,1}\n')
+  list_files[1]:write('return "b",{1}\n')
+  -- FILE 2
+  list_files[2]:write('return "a",{1}\n')
+  list_files[2]:write('return "c",{1,1,1,1,1,1,1,1,1}\n')
+  -- FILE 3
+  list_files[3]:write('return "a",{1,1}\n')
+  list_files[3]:write('return "c",{1}\n')
+  list_files[3]:write('return "d",{1,1,1,1,1,1}\n')
+  --
+  for i,f in ipairs(list_files) do
+    f:close()
+    gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
+    os.remove(list_tmpnames[i])
+  end
+  merge_gridfs_files(gridfs, list_tmpnames, 'result')
+  local lines = {
+    'return "a",{1,1,1,1,1,1}',
+    'return "b",{1}',
+    'return "c",{1,1,1,1,1,1,1,1,1,1}',
+    'return "d",{1,1,1,1,1,1}',
   }
-  s:finalize()
-  assert(db:find_one(s.task_ns).job == "FINISHED")
-  db:drop_collection(s.red_result_ns)
-  db:drop_collection(s.task_ns)
+  for line in gridfs_lines_iterator(gridfs, "result") do
+    assert(line == table.remove(lines,1))
+  end
 end
 
 ------------------------------------------------------------------------------
