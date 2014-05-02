@@ -15,7 +15,7 @@ local function tmpname_summary(tmpname)
   return tmpname:match("([^/]+)$")
 end
 
-local function task_set_task_status(self, status, tbl)
+local function task_set_task_status(self, status, tbl, db)
   self.tbl = tbl or {}
   self.tbl.status = status
   if self.tbl.status == TASK_STATUS.MAP then
@@ -28,6 +28,7 @@ local function task_set_task_status(self, status, tbl)
     self.current_results_ns = self.red_results_ns
     self.current_fname = self.tbl.reducefn
     self.current_args  = self.tbl.reduce_args
+    self.last_chunk = self.tbl.last_chunk
   end
 end
 
@@ -51,12 +52,14 @@ function task:update()
   local db = self.cnn:connect()
   local tbl = db:find_one(self.ns, { _id = "unique" })
   if tbl then
-    task_set_task_status(self, tbl.status, tbl)
+    task_set_task_status(self, tbl.status, tbl, db)
+    if tbl.status == TASK_STATUS.FINISHED then self.chunk = 0 end
   else
     self.current_results_ns = nil
     self.current_results_ns = nil
     self.current_fname = nil
     self.current_args  = nil
+    self.chunk = 0
   end
   self.tbl = tbl
 end
@@ -73,11 +76,16 @@ function task:get_task_status()
   end
 end
 
-function task:set_task_status(status)
+function task:set_task_status(status, extra)
   local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = { status = status } },
                     true, false) )
+  if extra then
+    assert( db:update(self.ns, { _id = "unique" },
+                      { ["$set"] = extra },
+                      true, false) )
+  end
   task_set_task_status(self, status)
 end
 
@@ -187,6 +195,15 @@ function task:take_next_job(tmpname)
     time = t,
     status = STATUS.RUNNING,
   }
+  if self.tbl.status == TASK_STATUS.REDUCE then
+    query["value.first_chunk"] = { ["$gte"] = self.chunk }
+    query["value.last_chunk"]  = { ["$lte"] = self.chunk }
+    while db:count(jobs_ns, query) == 0 and self.chunk < self.tbl.last_chunk do
+      self.chunk = self.chunk + 1
+      query["value.first_chunk"] = { ["$gte"] = self.chunk }
+      query["value.last_chunk"]  = { ["$lte"] = self.chunk }
+    end
+  end
   -- FIXME: check the write concern
   assert( db:update(jobs_ns, query,
                     {
@@ -228,7 +245,8 @@ function task:__call(cnn)
     map_jobs_ns    = dbname .. ".map_jobs",
     map_results_ns = dbname .. ".map_results",
     red_jobs_ns    = dbname .. ".red_jobs",
-    red_results_ns = dbname .. ".red_results",                
+    red_results_ns = dbname .. ".red_results",
+    chunk = 0,
   }
   setmetatable(obj, { __index=self })
   --

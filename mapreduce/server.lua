@@ -289,6 +289,7 @@ local function server_prepare_reduce(self)
   io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from aggregated map results. reduce
   -- jobs are described as a position in a gridfs file
+  local max_chunk_value = 0
   local counter = 0
   for line, first_chunk, last_chunk, first_chunk_pos, last_chunk_pos, pos, size in
   gridfs_lines_iterator(gridfs, group_result) do
@@ -308,12 +309,14 @@ local function server_prepare_reduce(self)
                                     pos/size*100))
       io.stderr:flush()
     end
+    max_chunk_value= math.max(max_chunk_value, last_chunk)
   end
   io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
   io.stderr:flush()
   self.cnn:flush_pending_inserts(0)
   io.stderr:write("# \t STARTING REDUCE\n")
-  self.task:set_task_status(TASK_STATUS.REDUCE)
+  self.task:set_task_status(TASK_STATUS.REDUCE,
+                            { last_chunk = max_chunk_value })
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
   return make_task_coroutine_wrap(self, red_jobs_ns)
 end
