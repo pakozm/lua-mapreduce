@@ -63,8 +63,6 @@ local function server_prepare_map(self)
   local count = 0
   for key,value in coroutine.wrap(f) do
     count = count + 1
-    assert(count < utils.MAX_NUMBER_OF_TASKS,
-           "Overflow maximum number of tasks: " .. utils.MAX_NUMBER_OF_TASKS)
     assert(tostring(key), "taskfn must return a string key")
     -- FIXME: check what happens when the insert is a duplicate of an existing
     -- key
@@ -90,7 +88,7 @@ local function gridfs_lines_iterator(gridfs, filename)
   return function()
     collectgarbage("collect")
     if current_chunk < num_chunks then
-      local chunk = chunk or gridfile:chunk(current_chunk)
+      chunk = chunk or gridfile:chunk(current_chunk)
       if current_pos < chunk:len() then
         local first_chunk = current_chunk
         local last_chunk  = current_chunk
@@ -232,7 +230,9 @@ local function server_prepare_reduce(self)
       table.insert(filenames, filename)
     end
   end
+  io.stderr:write("# \t MERGE\n")
   merge_gridfs_files(gridfs, filenames, group_result)
+  io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from aggregated map results. reduce
   -- jobs are described as a position in a gridfs file
   local pending_inserts = {}
@@ -256,6 +256,7 @@ local function server_prepare_reduce(self)
     db:insert_batch(red_jobs_ns, pending_inserts)
     pending_inserts = {}
   end
+  io.stderr:write("# \t STARTING REDUCE\n")
   self.task:set_task_status(TASK_STATUS.REDUCE)
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
   return make_task_coroutine_wrap(self, red_jobs_ns)

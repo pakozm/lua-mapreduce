@@ -23,7 +23,6 @@ local utils = {
     FINISHED = "FINISHED",
   },
   MAX_PENDING_INSERTS = 50000,
-  MAX_NUMBER_OF_TASKS = 14000,
   GRP_TMP_DIR = "/tmp/grouped",
 }
 
