@@ -13,9 +13,11 @@ local DEFAULT_DATE = utils.DEFAULT_DATE
 local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
 local grp_tmp_dir = utils.GRP_TMP_DIR
+local red_job_tmp_dir = utils.RED_JOB_TMP_DIR
 local escape = utils.escape
 local serialize_table_ipairs = utils.serialize_table_ipairs
 local make_job = utils.make_job
+local gridfs_lines_iterator = utils.gridfs_lines_iterator
 
 -- PRIVATE FUNCTIONS AND METHODS
 
@@ -77,77 +79,14 @@ local function server_prepare_map(self)
   return make_task_coroutine_wrap(self, map_jobs_ns)
 end
 
--- iterates over all the lines of a given gridfs filename, and returns the first
--- and last chunks where the line is contained, and the first and last position
--- inside the corresponding chunks
-local function gridfs_lines_iterator(gridfs, filename)
-  local gridfile = gridfs:find_file(filename)
-  local size          = #gridfile
-  local abs_pos       = 0
-  local current_chunk = 0
-  local current_pos   = 1
-  local num_chunks    = gridfile:num_chunks()
-  local chunk,data
-  return function()
-    if current_chunk < num_chunks then
-      chunk = chunk or gridfile:chunk(current_chunk)
-      if current_pos < chunk:len() then
-        local first_chunk = current_chunk
-        local last_chunk  = current_chunk
-        local first_chunk_pos = current_pos
-        local last_chunk_pos = current_pos
-        local tbl = {}
-        local found_line = false
-        repeat
-          chunk = chunk or gridfile:chunk(current_chunk)
-          data  = data  or chunk:data()
-          local match = data:match("^([^\n]*)\n", current_pos)
-          if match then
-            table.insert(tbl, match)
-            current_pos = #match + current_pos + 1 -- +1 because of the \n
-            abs_pos     = #match + abs_pos + 1
-            found_line = true
-          else -- if match ... then
-            -- inserts the whole chunk substring, no \n match found
-            table.insert(tbl, data:sub(current_pos, chunk:len()))
-            current_pos = chunk:len() + 1 -- forces to go next chunk
-            abs_pos     = abs_pos + chunk:len() - current_pos + 1
-          end -- if match ... then else ...
-          last_chunk_pos = current_pos - 1
-          last_chunk = current_chunk
-          -- go to next chunk if we are at the end
-          if current_pos > chunk:len() then
-            current_chunk = current_chunk + 1
-            current_pos   = 1
-            chunk,data    = nil,nil
-          end
-          -- avoids to process empty lines
-          if found_line and first_chunk==last_chunk and last_chunk_pos==first_chunk_pos then
-            tbl             = {}
-            found_line      = false
-            first_chunk     = current_chunk
-            last_chunk      = current_chunk
-            first_chunk_pos = current_pos
-            last_chunk_pos  = current_pos
-          end
-          --
-        until found_line or current_chunk >= num_chunks
-        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,abs_pos,size
-      end -- if current_pos < chunk:len() ...
-    end -- if current_chunk < gridfile:num_chunks() ...
-  end -- return function()
-end
-
 local function get_key_from_line(line)
   local key,value = load(line)()
   return key
 end
 
 local function merge_gridfs_files(cnn, db, gridfs,
-                                  filenames, result_filename,
-                                  red_results_ns)
-  local tmpname = os.tmpname()
-  local f = io.open(tmpname, "w")
+                                  filenames, part_func,
+                                  result_ns)
   -- initializes all the line iterators (one for each file)
   local line_iterators = {}
   for _,name in ipairs(filenames) do
@@ -204,22 +143,47 @@ local function merge_gridfs_files(cnn, db, gridfs,
     current_pos[i] = pos
     total_size = total_size + size
   end
+  -- table with reduce job gridFiles
+  local job_tmpname = os.tmpname()
+  local res_tmpname = os.tmpname()
+  os.remove(job_tmpname)
+  os.remove(res_tmpname)
+  --
+  assert(not result_ns:match("^/tmp/"))
+  --
+  function make_job_filename(part_key)
+    return string.format("%s.K%d",job_tmpname,part_key)
+  end
+  function make_res_filename(part_key)
+    return string.format("%s.K%d",res_tmpname,part_key)
+  end
+  local red_job_files = {}
+  local red_result_files = {}
   -- merge all the files until finished
   local counter = 0
   while not finished() do
     counter = counter + 1
     --
     local equals_list = search_equals()
+    assert(#equals_list > 0)
+    local key = data[equals_list[1]][1]
+    local part_key = assert(tonumber(part_func(key)),
+                            "Partition key must be a number")
+    assert(math.floor(part_key) == part_key,
+           "Partition key must be an integer")
     if #equals_list == 1 then
       if #data[equals_list[1]][2] == 1 then
         -- take note in pending_red_results table when not reduce is necessary
-        cnn:annotate_insert(red_results_ns,
-                            { _id   = data[equals_list[1]][1],
-                              value = data[equals_list[1]][2][1] })
+        red_result_files[part_key] = red_result_files[part_key] or
+          io.open(make_res_filename(part_key),"w")
+        red_result_files[part_key]:write(data[equals_list[1]][3])
+        red_result_files[part_key]:write("\n")
       else
         -- insert in the gridfs file when reduce is necessary
-        f:write(data[equals_list[1]][3])
-        f:write("\n")
+        red_job_files[part_key] = red_job_files[part_key] or
+          io.open(make_job_filename(part_key),"w")
+        red_job_files[part_key]:write(data[equals_list[1]][3])
+        red_job_files[part_key]:write("\n")
       end
       local pos = take_next(equals_list[1])
       if pos then current_pos[equals_list[1]] = pos end
@@ -234,7 +198,10 @@ local function merge_gridfs_files(cnn, db, gridfs,
         if pos then current_pos[which] = pos end
       end
       local value_str = serialize_table_ipairs(result)
-      f:write(string.format("return %s,%s\n",key_str,value_str))
+      red_job_files[part_key] = red_job_files[part_key] or
+        io.open(make_job_filename(part_key),"w")
+      red_job_files[part_key]:write(string.format("return %s,%s\n",
+                                                  key_str,value_str))
     end
     -- verbose output
     if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
@@ -249,13 +216,26 @@ local function merge_gridfs_files(cnn, db, gridfs,
   end
   io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
   io.stderr:flush()
-  f:close()
-  -- insert all the remaining pending results
-  cnn:flush_pending_inserts(0)
-  -- store the file in gridfs and remove temporal local file
-  gridfs:remove_file(result_filename)
-  gridfs:store_file(tmpname, result_filename)
-  os.remove(tmpname)
+  -- close all the files and upload them to mongo gridfs
+  for part_key,f in pairs(red_job_files) do
+    local fname = make_job_filename(part_key)
+    local gridfs_name = string.format("%s.K%d",red_job_tmp_dir,part_key)
+    f:close()
+    gridfs:remove_file(gridfs_name)
+    gridfs:store_file(fname, gridfs_name)
+    os.remove(fname)
+    -- remove crashed results
+    local gridfs_name = string.format("%s.K%d",result_ns,part_key)
+    gridfs:remove_file(gridfs_name)
+  end
+  for part_key,f in pairs(red_result_files) do
+    local fname = make_res_filename(part_key)
+    local gridfs_name = string.format("%s.K%d",result_ns,part_key)
+    f:close()
+    gridfs:remove_file(gridfs_name)
+    gridfs:store_file(fname, gridfs_name)
+    os.remove(fname)
+  end
   -- remove all map result gridfs files
   for _,name in ipairs(filenames) do
     gridfs:remove_file(name)
@@ -269,8 +249,7 @@ local function server_prepare_reduce(self)
   local dbname = self.cnn:get_dbname()
   local red_jobs_ns = self.task:get_red_jobs_ns()
   remove_pending_tasks(db, red_jobs_ns)
-  -- group all map results
-  local group_result = "group_result"
+  -- group map results depending in the partition function
   local filenames = {}
   for obj in gridfs:list():results() do
     local filename = obj.filename
@@ -280,39 +259,24 @@ local function server_prepare_reduce(self)
   end
   -- if #filenames == 0 all data has been processed, avoid merge
   if #filenames > 0 then
-    io.stderr:write("# \t MERGE\n")
+    io.stderr:write("# \t MERGE AND PARTITIONING\n")
     merge_gridfs_files(self.cnn, db, gridfs,
-                       filenames, group_result,
-                       self.task:get_red_results_ns())
+                       filenames, self.partitionfn.func,
+                       self.result_ns)
     collectgarbage("collect")
   end
   io.stderr:write("# \t CREATING JOBS\n")
-  -- create reduce jobs in mongo database, from aggregated map results. reduce
-  -- jobs are described as a position in a gridfs file
-  local max_chunk_value = 0
-  local counter = 0
-  for line, first_chunk, last_chunk, first_chunk_pos, last_chunk_pos, pos, size in
-  gridfs_lines_iterator(gridfs, group_result) do
-    counter = counter + 1
-    local key   = get_key_from_line(line)
-    local value = {
-      file = group_result,
-      first_chunk = first_chunk,
-      last_chunk = last_chunk,
-      first_chunk_pos = first_chunk_pos,
-      last_chunk_pos = last_chunk_pos,
-    }
-    self.cnn:annotate_insert(red_jobs_ns, make_job(key,value))
-    if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
-      collectgarbage("collect")
-      io.stderr:write(string.format("\r\t%6.1f %% ",
-                                    pos/size*100))
-      io.stderr:flush()
+  -- create reduce jobs in mongo database, from partitioned space
+  for v in gridfs:list_files() do
+    if v.filename:match(string.format("^%s",red_job_tmp_dir)) then
+      local part_key = assert(tonumber(v.filename:match("^.*.K([0-9])+$")))
+      local value = {
+        file   = v.filename,
+        result = string.format("%s.K%d",self.result_ns,part_key),
+      }
+      self.cnn:annotate_insert(red_jobs_ns, make_job(part_key, value))
     end
-    max_chunk_value= math.max(max_chunk_value, last_chunk)
   end
-  io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
-  io.stderr:flush()
   self.cnn:flush_pending_inserts(0)
   io.stderr:write("# \t STARTING REDUCE\n")
   self.task:set_task_status(TASK_STATUS.REDUCE,
@@ -355,14 +319,15 @@ function server_methods:configure(params)
   self.configured = true
   self.task_args = params.task_args
   self.map_args = params.map_args
+  self.partition_args = params.partition_args
   self.reduce_args = params.reduce_args
   self.final_args = params.final_args
   local dbname = self.dbname
-  local taskfn,mapfn,reducefn,finalfn
+  local taskfn,mapfn,partitionfn,reducefn,finalfn
   local scripts = {}
-  assert(params.taskfn and params.mapfn and params.reducefn,
-         "Fields taskfn, mapfn and reducefn are mandatory")
-  for _,name in ipairs{ "taskfn", "mapfn", "reducefn", "finalfn" } do
+  assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
+         "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
+  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
     assert(params[name] and type(params[name]) == "string",
            string.format("Needs a %s module", name))
     local aux = require(params[name])
@@ -379,12 +344,14 @@ function server_methods:configure(params)
   end
   local db = self.cnn:connect()
   --
+  self.partitionfn = require(scripts.partitionfn)
   self.taskfn = require(scripts.taskfn)
   if scripts.finalfn then
     self.finalfn = require(scripts.finalfn)
   else
     self.finalfn = { func = function() end }
   end
+  if self.partitionfn.init then self.partitionfn.init(self.partition_args) end
   if self.taskfn.init then self.taskfn.init(self.task_args) end
   if self.finalfn.init then self.finalfn.init(self.final_args) end
   self.mapfn = params.mapfn

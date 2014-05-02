@@ -28,7 +28,6 @@ local function task_set_task_status(self, status, tbl, db)
     self.current_results_ns = self.red_results_ns
     self.current_fname = self.tbl.reducefn
     self.current_args  = self.tbl.reduce_args
-    self.last_chunk = self.tbl.last_chunk
   end
 end
 
@@ -53,13 +52,11 @@ function task:update()
   local tbl = db:find_one(self.ns, { _id = "unique" })
   if tbl then
     task_set_task_status(self, tbl.status, tbl, db)
-    if tbl.status == TASK_STATUS.FINISHED then self.chunk = 0 end
   else
     self.current_results_ns = nil
     self.current_results_ns = nil
     self.current_fname = nil
     self.current_args  = nil
-    self.chunk = 0
   end
   self.tbl = tbl
 end
@@ -195,24 +192,13 @@ function task:take_next_job(tmpname)
     time = t,
     status = STATUS.RUNNING,
   }
-  local multiple_documents = false
-  if self.tbl.status == TASK_STATUS.REDUCE then
-    multiple_documents = true
-    query["value.first_chunk"] = { ["$gte"] = self.chunk }
-    query["value.last_chunk"]  = { ["$lte"] = self.chunk }
-    while db:count(jobs_ns, query) == 0 and self.chunk < self.tbl.last_chunk do
-      self.chunk = self.chunk + 1
-      query["value.first_chunk"] = { ["$gte"] = self.chunk }
-      query["value.last_chunk"]  = { ["$lte"] = self.chunk }
-    end
-  end
   -- FIXME: check the write concern
   assert( db:update(jobs_ns, query,
                     {
                       ["$set"] = set_query,
                     },
-                    false, -- no create a new document if not exists
-                    multiple_documents) )  -- only update the first match
+                    false,    -- no create a new document if not exists
+                    false) )  -- only update the first match
   -- FIXME: be careful, this call could fail if the secondary server don't has
   -- updated its data
   local job_tbl = db:find_one(jobs_ns, set_query)
@@ -248,7 +234,6 @@ function task:__call(cnn)
     map_results_ns = dbname .. ".map_results",
     red_jobs_ns    = dbname .. ".red_jobs",
     red_results_ns = dbname .. ".red_results",
-    chunk = 0,
   }
   setmetatable(obj, { __index=self })
   --

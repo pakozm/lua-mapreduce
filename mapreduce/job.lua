@@ -10,44 +10,6 @@ local grp_tmp_dir = utils.GRP_TMP_DIR
 local serialize_sorted_by_lines = utils.serialize_sorted_by_lines
 
 -- PRIVATE FUNCTIONS AND METHODS
-local cached_chunk_id,cached_chunk,cached_chunk_data
-local function take_value_from_gridfs(gridfs, chunk_value)
-  local file = chunk_value.file
-  local first_chunk = chunk_value.first_chunk
-  local last_chunk = chunk_value.last_chunk
-  local first_chunk_pos = chunk_value.first_chunk_pos
-  local last_chunk_pos = chunk_value.last_chunk_pos
-  local gridfile = assert( gridfs:find_file(file) )
-  local tbl = {}
-  assert(first_chunk >= 0)
-  assert(first_chunk <= last_chunk)
-  assert(last_chunk  <  gridfile:num_chunks())
-  for i=first_chunk,last_chunk do
-    -- take chunk and data from cached values or from file is case it was
-    -- necessary
-    local chunk,data
-    if i == cached_chunk_id then
-      chunk,data = cached_chunk,cached_chunk_data
-    else
-      chunk = assert( gridfile:chunk(i) )
-      data = assert( chunk:data() )
-      cached_chunk_id,cached_chunk,cached_chunk_data = i,chunk,data
-    end
-    local from,to = 1,#data
-    if i == first_chunk then
-      assert(first_chunk_pos > 0 and first_chunk_pos <= #data)
-      from = first_chunk_pos
-    end
-    if i == last_chunk then
-      assert(last_chunk_pos > 0 and last_chunk_pos <= #data)
-      to = last_chunk_pos
-    end
-    table.insert(tbl, data:sub(from,to))
-  end
-  local str = table.concat(tbl)
-  local key,value = assert(load(str)())
-  return value
-end
 
 -- loads the required Lua module, sets the upvalue for the "emit" function,
 -- executes init function if needed, and returns the resulting function
@@ -178,16 +140,32 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
     if not not_executable then
       fn = function()
         -- in reduce jobs, the value is a reference to a gridfs filename
-        local value = take_value_from_gridfs(obj.cnn:gridfs(), value)
-        local value = g(key,value) -- executes the REDUCE function
-        assert(value, "Reduce must return a value")
+        local part_key = key
+        local job_file = value.file
+        local res_file = value.result
+        local tmpname = os.tmpname()
+        local gridfile = gridfs:find_file(res_file)
+        local f
+        if gridfile then
+          gridfile:write(tmpname)
+          gridfile = nil
+          gridfs:remove_file(res_file)
+          f = io.open(tmpname, "a")
+        else
+          f = io.open(tmpname, "w")
+        end
+        for line in gridfs_lines_iterator(obj.cnn:gridfs(), job_file) do
+          local k,v = load(line)()
+          local v = g(k,v) -- executes the REDUCE function
+          assert(v, "Reduce must return a value")
+          f:write(string.format("return %s,%s\n",
+                                utils.escape(k), utils.escape(v)))
+        end
+        f:close()
         -- job is marked as finished, but not as written
         job_mark_as_finished(obj)
-        obj.cnn:annotate_insert(obj.results_ns, { _id=key, value=value },
-                                function()
-                                  -- job is marked as written to the database
-                                  job_mark_as_written(obj)
-                                end)
+        gridfs:store_file(tmpname,res_file)
+        job_mark_as_written(obj)
       end
     end
   end

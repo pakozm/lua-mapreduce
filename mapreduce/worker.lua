@@ -22,8 +22,11 @@ function worker_methods:execute()
   local ntasks     = 0
   local job_done
   while iter < MAX_ITER and ntasks < MAX_TASKS do
+    collectgarbage("collect")
+    local counter = 0
     repeat
-      collectgarbage("collect")
+      counter = counter + 1
+      if counter % utils.MAX_IT_WO_CGARBAGE then collectgarbage("collect") end
       task:update()
       local task_status,job = task:take_next_job(self.tmpname)
       if job then
@@ -36,6 +39,7 @@ function worker_methods:execute()
         print("# \t\t FINISHED")
         job_done = true
       else -- if dbname then ... else
+        collectgarbage("collect")
         self.cnn:flush_pending_inserts(0)
         utils.sleep(utils.DEFAULT_SLEEP)
       end -- if dbname then ... else ... end

@@ -22,9 +22,11 @@ local utils = {
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
   },
-  MAX_PENDING_INSERTS = 50000,
-  MAX_IT_WO_CGARBAGE  =  5000,
+  MAX_PENDING_INSERTS  = 50000,
+  MAX_IT_WO_CGARBAGE   =  5000,
+  MAX_TIME_WO_CGARBAGE =    60, -- 1 minute
   GRP_TMP_DIR = "/tmp/grouped",
+  RED_JOB_TMP_DIR = "/tmp/red_job",
 }
 
 local STATUS = utils.STATUS
@@ -109,6 +111,67 @@ local function serialize_sorted_by_lines(f,result,combiner)
   end
 end
 
+-- iterates over all the lines of a given gridfs filename, and returns the first
+-- and last chunks where the line is contained, and the first and last position
+-- inside the corresponding chunks
+local function gridfs_lines_iterator(gridfs, filename)
+  local gridfile = gridfs:find_file(filename)
+  local size          = #gridfile
+  local abs_pos       = 0
+  local current_chunk = 0
+  local current_pos   = 1
+  local num_chunks    = gridfile:num_chunks()
+  local chunk,data
+  return function()
+    if current_chunk < num_chunks then
+      chunk = chunk or gridfile:chunk(current_chunk)
+      if current_pos < chunk:len() then
+        local first_chunk = current_chunk
+        local last_chunk  = current_chunk
+        local first_chunk_pos = current_pos
+        local last_chunk_pos = current_pos
+        local tbl = {}
+        local found_line = false
+        repeat
+          chunk = chunk or gridfile:chunk(current_chunk)
+          data  = data  or chunk:data()
+          local match = data:match("^([^\n]*)\n", current_pos)
+          if match then
+            table.insert(tbl, match)
+            current_pos = #match + current_pos + 1 -- +1 because of the \n
+            abs_pos     = #match + abs_pos + 1
+            found_line = true
+          else -- if match ... then
+            -- inserts the whole chunk substring, no \n match found
+            table.insert(tbl, data:sub(current_pos, chunk:len()))
+            current_pos = chunk:len() + 1 -- forces to go next chunk
+            abs_pos     = abs_pos + chunk:len() - current_pos + 1
+          end -- if match ... then else ...
+          last_chunk_pos = current_pos - 1
+          last_chunk = current_chunk
+          -- go to next chunk if we are at the end
+          if current_pos > chunk:len() then
+            current_chunk = current_chunk + 1
+            current_pos   = 1
+            chunk,data    = nil,nil
+          end
+          -- avoids to process empty lines
+          if found_line and first_chunk==last_chunk and last_chunk_pos==first_chunk_pos then
+            tbl             = {}
+            found_line      = false
+            first_chunk     = current_chunk
+            last_chunk      = current_chunk
+            first_chunk_pos = current_pos
+            last_chunk_pos  = current_pos
+          end
+          --
+        until found_line or current_chunk >= num_chunks
+        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,abs_pos,size
+      end -- if current_pos < chunk:len() ...
+    end -- if current_chunk < gridfile:num_chunks() ...
+  end -- return function()
+end
+
 --------------------------------------------------------------------------------
 
 utils.iscallable = iscallable
@@ -123,5 +186,6 @@ utils.connect = connect
 utils.escape = escape
 utils.serialize_table_ipairs = serialize_table_ipairs
 utils.serialize_sorted_by_lines = serialize_sorted_by_lines
+utils.gridfs_lines_iterator = gridfs_lines_iterator
 
 return utils
