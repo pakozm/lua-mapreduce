@@ -76,8 +76,8 @@ local function job_get_func(self, fname, args)
     -- emit function is inserted in the environment of the function
     f.upvalue = v
   end
-  self.result = {}
   f.upvalue.emit = function(key, value)
+    self.result = self.result or {}
     self.result[key] = self.result[key] or {}
     table.insert(self.result[key], value)
   end
@@ -144,7 +144,7 @@ end
 
 -- constructor, receives a connection and a task instance
 function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
-                    not_executable)
+                    not_executable, combiner_fname, combiner_args)
   local obj = {
     cnn = cnn,
     job_tbl = job_tbl,
@@ -161,18 +161,21 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
     obj.results_ns = obj.results_ns .. ".K" .. key
     if not not_executable then
       fn = function()
-        g(key,value) -- executes the MAP function, the result is self.result
+        g(key,value) -- executes the MAP function, the result is obj.result
         -- the job is not marked as finished, but yes as grouped
         -- job_mark_as_finished(obj)
         --
-        -- aggregates all the map job in a gridfs file
         local results_ns = obj.results_ns
-        local result     = obj.result
+        -- combiner, apply the reduce function before put result to database
+        local combiner = (combiner_fname and job_get_func(obj, combiner_fname,
+                                                          combiner_args))
+        -- aggregates all the map job in a gridfs file
+        local result     = obj.result or {}
         local db         = obj.cnn:connect()
         local gridfs     = obj.cnn:gridfs()
         local tmpname    = os.tmpname()
         local f = io.open(tmpname,"w")
-        serialize_sorted_by_lines(f,result)
+        serialize_sorted_by_lines(f,result,combiner)
         f:close()
         local gridfs_filename = string.format("%s/%s",grp_tmp_dir,results_ns)
         gridfs:remove_file(gridfs_filename)

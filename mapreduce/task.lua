@@ -117,6 +117,14 @@ function task:get_args()
   return self.current_args
 end
 
+function task:get_reduce_fname()
+  return self.tbl.reducefn
+end
+
+function task:get_reduce_args()
+  return self.tbl.reduce_args
+end
+
 -- JOB INTERFACE
 
 function task:finished_jobs_iterator()
@@ -192,7 +200,9 @@ function task:take_next_job(tmpname)
   if job_tbl then
     return task_status,job(self.cnn, job_tbl, task_status,
                            self:get_fname(), self:get_args(),
-                           jobs_ns, results_ns)
+                           jobs_ns, results_ns,
+                           nil, -- not_executable = false
+                           self:get_reduce_fname(), self:get_reduce_args())
     
   else -- if self.one_job then ...
     -- the job (if taken) will be freed, making it available to other worker

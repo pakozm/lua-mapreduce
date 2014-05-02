@@ -128,7 +128,7 @@ local function gridfs_lines_iterator(gridfs, filename)
           end
           --
         until found_line or current_chunk >= num_chunks
-        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos
+        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,num_chunks
       end -- if current_pos < chunk:len() ...
     end -- if current_chunk < gridfile:num_chunks() ...
   end -- return function()
@@ -155,10 +155,11 @@ local function merge_gridfs_files(db, gridfs,
   -- take the next data of a given file number
   local take_next = function(which)
     if line_iterators[which] then
-      local line = line_iterators[which]()
+      local line,_,chunk,_,_,num_chunks = line_iterators[which]()
       if line then
         data[which] = data[which] or {}
         data[which][3],data[which][1],data[which][2] = line,load(line)()
+        return chunk,num_chunks
       else
         data[which] = nil
         line_iterators[which] = nil
@@ -198,10 +199,19 @@ local function merge_gridfs_files(db, gridfs,
       collectgarbage("collect")
     end
   end
-  -- initialize data with first line over all files
-  for i=1,#filenames do take_next(i) end
+  -- initialize data with first line over all files, and count chunks for
+  -- verbose output
+  local current_chunk = {}
+  local total_chunks = 0
+  for i=1,#filenames do
+    local _,num_chunks = take_next(i)
+    current_chunk[i] = 0
+    total_chunks = total_chunks + num_chunks
+  end
   -- merge all the files until finished
+  local counter = 0
   while not finished() do
+    counter = counter + 1
     local equals_list = search_equals()
     if #equals_list == 1 then
       if #data[equals_list[1]][2] == 1 then
@@ -215,7 +225,7 @@ local function merge_gridfs_files(db, gridfs,
         f:write(data[equals_list[1]][3])
         f:write("\n")
       end
-      take_next(equals_list[1])
+      current_chunk[equals_list[1]] = take_next(equals_list[1])
     else
       collectgarbage("collect")
       local key_str = escape(data[equals_list[1]][1])
@@ -224,12 +234,23 @@ local function merge_gridfs_files(db, gridfs,
         for _,v in ipairs(data[which][2]) do
           table.insert(result, v)
         end
-        take_next(which)
+        current_chunk[which] = take_next(which)
       end
       local value_str = serialize_table_ipairs(result)
       f:write(string.format("return %s,%s\n",key_str,value_str))
     end
+    -- verbose output
+    if counter % 1000 == 0 then
+      local pos = 0
+      for i=1,#filenames do pos = pos + current_chunk[i] - 1 end
+      pos = math.max(0,pos)
+      io.stderr:write(string.format("\r\t\t%6.1f %% ",
+                                    pos/total_chunks*100))
+      io.stderr:flush()
+    end
   end
+  io.stderr:write(string.format("\r\t\t%6.1f %% \n", 100))
+  io.stderr:flush()
   f:close()
   -- insert all the remaining pending results
   check_pending_results(0)
@@ -411,12 +432,12 @@ server.utest = function(connection_string, dbname, auth_table)
     end,
     concat = function(self) return table.concat(self.tbl or {}) end,
   }
-  serialize_sorted_by_lines(f,{
-                              KEY1 = {1,1,1,1,1},
-                              KEY2 = {1,1,1},
-                              KEY3 = {1},
-                              KEY4 = { "hello\nworld" }
-                              })
+  utils.serialize_sorted_by_lines(f,{
+                                    KEY1 = {1,1,1,1,1},
+                                    KEY2 = {1,1,1},
+                                    KEY3 = {1},
+                                    KEY4 = { "hello\nworld" }
+                                    })
   local result = [[return "KEY1",{1,1,1,1,1}
 return "KEY2",{1,1,1}
 return "KEY3",{1}
@@ -468,15 +489,18 @@ return "KEY4",{"hello\nworld"}
     gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
     os.remove(list_tmpnames[i])
   end
-  merge_gridfs_files(gridfs, list_tmpnames, 'result')
+  merge_gridfs_files(db, gridfs, list_tmpnames, 'result', 'tmp.result2')
   local lines = {
     'return "a",{1,1,1,1,1,1}',
-    'return "b",{1}',
     'return "c",{1,1,1,1,1,1,1,1,1,1}',
     'return "d",{1,1,1,1,1,1}',
   }
   for line in gridfs_lines_iterator(gridfs, "result") do
     assert(line == table.remove(lines,1))
+  end
+  for v in db:query('tmp.result2'):results() do
+    assert(v._id == "b")
+    assert(v.value == 1)
   end
 end
 

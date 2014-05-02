@@ -91,8 +91,15 @@ local function serialize_table_ipairs(t)
   return string.format("{%s}",table.concat(result, ","))
 end
 
-local function serialize_sorted_by_lines(f,result)
-  local keys = {} for k,_ in pairs(result) do table.insert(keys,k) end
+local function serialize_sorted_by_lines(f,result,combiner)
+  local keys = {}
+  for k,v in pairs(result) do
+    table.insert(keys,k)
+    -- combine as soon as possible allows reduction of intermediate file sizes
+    if combiner and #v > 1 then
+      result[k] = { assert(combiner(k,v)) }
+    end
+  end
   table.sort(keys)
   for _,key in ipairs(keys) do
     local key_str = escape(key)
