@@ -26,8 +26,7 @@ local function make_task_coroutine_wrap(self,ns)
   return coroutine.wrap(function()
                           repeat
                             local db = self.cnn:connect()
-                            -- FIXME: implement this count in one call
-                            local M = db:count(ns, { status = STATUS.FINISHED }) + db:count(ns, { status = STATUS.GROUPED })
+                            local M = db:count(ns, { status = STATUS.WRITTEN })
                             if M then
                               io.stderr:write(string.format("\r%6.1f %% ",
                                                             M/N*100))
@@ -39,11 +38,13 @@ local function make_task_coroutine_wrap(self,ns)
                         end)
 end
 
--- removes all the tasks which are in WAITING or BROKEN states
+-- removes all the tasks which are not WRITTEN
 local function remove_pending_tasks(db,ns)
   return db:remove(ns,
-                   { ["$or"] = { { status = STATUS.BROKEN, },
-                                 { status = STATUS.WAITING } } },
+                   { ["$or"] = { { status = STATUS.BROKEN,  },
+                                 { status = STATUS.WAITING  },
+                                 { status = STATUS.FINISHED },
+                                 { status = STATUS.RUNNING  }, } },
                    false)
 end
 
@@ -119,10 +120,9 @@ local function gridfs_lines_iterator(gridfs, filename)
             current_chunk = current_chunk + 1
             current_pos   = 1
             chunk,data    = nil,nil
-            collectgarbage("collect")
           end
           -- avoids to process empty lines
-          if first_chunk == last_chunk and last_chunk_pos-first_chunk_pos < 2 then
+          if found_line and first_chunk==last_chunk and last_chunk_pos==first_chunk_pos then
             tbl             = {}
             found_line      = false
             first_chunk     = current_chunk
@@ -143,10 +143,9 @@ local function get_key_from_line(line)
   return key
 end
 
-local function merge_gridfs_files(db, gridfs,
+local function merge_gridfs_files(cnn, db, gridfs,
                                   filenames, result_filename,
                                   red_results_ns)
-  local pending_red_results = {}
   local tmpname = os.tmpname()
   local f = io.open(tmpname, "w")
   -- initializes all the line iterators (one for each file)
@@ -195,14 +194,6 @@ local function merge_gridfs_files(db, gridfs,
     end
     return list
   end
-  -- checks the number of pending results and inserts them if necessary
-  function check_pending_results(max)
-    if #pending_red_results > max then
-      db:insert_batch(red_results_ns, pending_red_results)
-      pending_red_results = {}
-      collectgarbage("collect")
-    end
-  end
   -- initialize data with first line over all files, and count chunks for
   -- verbose output
   local current_pos = {}
@@ -222,10 +213,9 @@ local function merge_gridfs_files(db, gridfs,
     if #equals_list == 1 then
       if #data[equals_list[1]][2] == 1 then
         -- take note in pending_red_results table when not reduce is necessary
-        table.insert(pending_red_results,
-                     { _id   = data[equals_list[1]][1],
-                       value = data[equals_list[1]][2][1] })
-        check_pending_results(utils.MAX_PENDING_INSERTS)
+        cnn:annotate_insert(red_results_ns,
+                            { _id   = data[equals_list[1]][1],
+                              value = data[equals_list[1]][2][1] })
       else
         -- insert in the gridfs file when reduce is necessary
         f:write(data[equals_list[1]][3])
@@ -247,7 +237,7 @@ local function merge_gridfs_files(db, gridfs,
       f:write(string.format("return %s,%s\n",key_str,value_str))
     end
     -- verbose output
-    if counter % 1000 == 0 then
+    if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
       local pos = 0
       for i=1,#filenames do pos = pos + current_pos[i] end
       pos = math.min(pos,total_size)
@@ -261,11 +251,15 @@ local function merge_gridfs_files(db, gridfs,
   io.stderr:flush()
   f:close()
   -- insert all the remaining pending results
-  check_pending_results(0)
+  cnn:flush_pending_inserts(0)
   -- store the file in gridfs and remove temporal local file
   gridfs:remove_file(result_filename)
   gridfs:store_file(tmpname, result_filename)
   os.remove(tmpname)
+  -- remove all map result gridfs files
+  for _,name in ipairs(filenames) do
+    gridfs:remove_file(name)
+  end  
 end
 
 -- insert the job in the mongo db and returns a coroutine
@@ -284,16 +278,21 @@ local function server_prepare_reduce(self)
       table.insert(filenames, filename)
     end
   end
-  io.stderr:write("# \t MERGE\n")
-  merge_gridfs_files(db, gridfs,
-                     filenames, group_result,
-                     self.task:get_red_results_ns())
+  -- if #filenames == 0 all data has been processed, avoid merge
+  if #filenames > 0 then
+    io.stderr:write("# \t MERGE\n")
+    merge_gridfs_files(self.cnn, db, gridfs,
+                       filenames, group_result,
+                       self.task:get_red_results_ns())
+    collectgarbage("collect")
+  end
   io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from aggregated map results. reduce
   -- jobs are described as a position in a gridfs file
-  local pending_inserts = {}
-  for line, first_chunk, last_chunk, first_chunk_pos, last_chunk_pos in
+  local counter = 0
+  for line, first_chunk, last_chunk, first_chunk_pos, last_chunk_pos, pos, size in
   gridfs_lines_iterator(gridfs, group_result) do
+    counter = counter + 1
     local key   = get_key_from_line(line)
     local value = {
       file = group_result,
@@ -302,16 +301,17 @@ local function server_prepare_reduce(self)
       first_chunk_pos = first_chunk_pos,
       last_chunk_pos = last_chunk_pos,
     }
-    table.insert(pending_inserts, make_job(key,value))
-    if #pending_inserts >= utils.MAX_PENDING_INSERTS then
-      db:insert_batch(red_jobs_ns, pending_inserts)
-      pending_inserts = {}
+    self.cnn:annotate_insert(red_jobs_ns, make_job(key,value))
+    if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
+      collectgarbage("collect")
+      io.stderr:write(string.format("\r\t%6.1f %% ",
+                                    pos/size*100))
+      io.stderr:flush()
     end
   end
-  if #pending_inserts > 0 then
-    db:insert_batch(red_jobs_ns, pending_inserts)
-    pending_inserts = {}
-  end
+  io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
+  io.stderr:flush()
+  self.cnn:flush_pending_inserts(0)
   io.stderr:write("# \t STARTING REDUCE\n")
   self.task:set_task_status(TASK_STATUS.REDUCE)
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
@@ -497,7 +497,7 @@ return "KEY4",{"hello\nworld"}
     gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
     os.remove(list_tmpnames[i])
   end
-  merge_gridfs_files(db, gridfs, list_tmpnames, 'result', 'tmp.result2')
+  merge_gridfs_files(cnn, db, gridfs, list_tmpnames, 'result', 'tmp.result2')
   local lines = {
     'return "a",{1,1,1,1,1,1}',
     'return "c",{1,1,1,1,1,1,1,1,1,1}',

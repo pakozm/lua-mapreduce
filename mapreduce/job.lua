@@ -41,24 +41,6 @@ local function take_value_from_gridfs(gridfs, chunk_value)
   return value
 end
 
-
--- the jobs are processed in batches, when a batch is ready, this function
--- inserts all the batch results in the database
-local function job_process_pending_inserts(self)
-  local db = self.cnn:connect()
-  assert( db:insert_batch(self.results_ns, self.pending_inserts) )
-  self.pending_inserts = {}
-  collectgarbage("collect")
-end
-
-local function job_insert_result(self,key,value)
-  local t = os.time()
-  table.insert(self.pending_inserts, { key=key, value=value })
-  if #self.pending_inserts > utils.MAX_PENDING_INSERTS then
-    job_process_pending_inserts(self)
-  end
-end
-
 -- loads the required Lua module, sets the upvalue for the "emit" function,
 -- executes init function if needed, and returns the resulting function
 local funcs = { }
@@ -101,7 +83,7 @@ local function job_mark_as_finished(self)
                     false) )
 end
 
-function job_mark_as_grouped(self)
+function job_mark_as_written(self)
   assert(self.job_tbl)
   local db = self.cnn:connect()
   assert( db:update(self.jobs_ns,
@@ -110,7 +92,7 @@ function job_mark_as_grouped(self)
                     },
                     {
                       ["$set"] = {
-                        status = STATUS.GROUPED,
+                        status = STATUS.WRITTEN,
                         time = os.time(),
                       },
                     },
@@ -150,7 +132,6 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
     job_tbl = job_tbl,
     jobs_ns = jobs_ns,
     results_ns = results_ns,
-    pending_inserts = {},
   }
   setmetatable(obj, { __index=self })
   --
@@ -162,8 +143,8 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
     if not not_executable then
       fn = function()
         g(key,value) -- executes the MAP function, the result is obj.result
-        -- the job is not marked as finished, but yes as grouped
-        -- job_mark_as_finished(obj)
+        -- the job is marked as finished, but not written
+        job_mark_as_finished(obj)
         --
         local results_ns = obj.results_ns
         -- combiner, apply the reduce function before put result to database
@@ -181,7 +162,8 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         gridfs:remove_file(gridfs_filename)
         gridfs:store_file(tmpname, gridfs_filename)
         os.remove(tmpname)
-        job_mark_as_grouped(obj)
+        -- job is marked as written to the database
+        job_mark_as_written(obj)
       end
     end
   elseif task_status == "REDUCE" then
@@ -191,9 +173,13 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         local value = take_value_from_gridfs(obj.cnn:gridfs(), value)
         local value = g(key,value) -- executes the REDUCE function
         assert(value, "Reduce must return a value")
-        local db = obj.cnn:connect()
-        db:insert(obj.results_ns, { _id=key, value=value })
+        -- job is marked as finished, but not as written
         job_mark_as_finished(obj)
+        obj.cnn:annotate_insert(obj.results_ns, { _id=key, value=value },
+                                function()
+                                  -- job is marked as written to the database
+                                  job_mark_as_written(obj)
+                                end)
       end
     end
   end

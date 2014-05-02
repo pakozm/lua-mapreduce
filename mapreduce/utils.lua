@@ -14,7 +14,7 @@ local utils = {
     RUNNING = 1,  -- status when a worker is running the job
     BROKEN = 2,   -- a job which is detected as broken
     FINISHED = 3, -- a finished job
-    GROUPED = 4,  -- a finished job which results has been grouped
+    WRITTEN = 4,  -- a finished job which results has been written
   },
   TASK_STATUS = {
     WAIT     = "WAIT",
@@ -23,6 +23,7 @@ local utils = {
     FINISHED = "FINISHED",
   },
   MAX_PENDING_INSERTS = 50000,
+  MAX_IT_WO_CGARBAGE  =  5000,
   GRP_TMP_DIR = "/tmp/grouped",
 }
 
