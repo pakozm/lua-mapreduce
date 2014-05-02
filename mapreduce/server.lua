@@ -176,8 +176,9 @@ local function merge_gridfs_files(cnn, db, gridfs,
         -- take note in pending_red_results table when not reduce is necessary
         red_result_files[part_key] = red_result_files[part_key] or
           io.open(make_res_filename(part_key),"w")
-        red_result_files[part_key]:write(data[equals_list[1]][3])
-        red_result_files[part_key]:write("\n")
+        red_result_files[part_key]:write(string.format("return %s,%s\n",
+                                                       escape(data[equals_list[1]][1]),
+                                                       escape(data[equals_list[1]][2][1])))
       else
         -- insert in the gridfs file when reduce is necessary
         red_job_files[part_key] = red_job_files[part_key] or
@@ -267,9 +268,9 @@ local function server_prepare_reduce(self)
   end
   io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from partitioned space
-  for v in gridfs:list_files() do
+  for v in gridfs:list():results() do
     if v.filename:match(string.format("^%s",red_job_tmp_dir)) then
-      local part_key = assert(tonumber(v.filename:match("^.*.K([0-9])+$")))
+      local part_key = assert(tonumber(v.filename:match("^.*.K(%d+)$")))
       local value = {
         file   = v.filename,
         result = string.format("%s.K%d",self.result_ns,part_key),
@@ -296,18 +297,44 @@ end
 
 -- finalizer for the map-reduce process
 local function server_final(self)
-  local db = self.cnn:connect()
+  -- FIXME: self.result_ns could contain especial characters, it will be
+  -- necessary to escape them
+  local match_str = string.format("^%s",self.result_ns)
+  local gridfs = self.cnn:gridfs()
   local task = self.task
   task:set_task_status(TASK_STATUS.FINISHED)
-  local results_ns = task:get_red_results_ns()
-  local q = db:query(results_ns, {})
-  self.finalfn.func(q, db, results_ns)
+  local files = gridfs:list()
+  local current_file
+  local lines_iterator
+  local pair_iterator = function()
+    local line
+    repeat
+      if lines_iterator then
+        line = lines_iterator()
+      end
+      if not line then
+        current_file = files:next()
+        if current_file and current_file.filename:match(match_str) then
+          lines_iterator = gridfs_lines_iterator(gridfs,current_file.filename)
+        end
+      end
+    until current_file == nil or line ~= nil
+    if line then
+      return load(line)()
+    end
+  end
+  local remove_all = self.finalfn.func(pair_iterator)
   -- drop collections, except reduce result and task status
+  local db = self.cnn:connect()
   db:drop_collection(task:get_map_jobs_ns())
   db:drop_collection(task:get_red_jobs_ns())
   db:drop_collection(task:get_red_results_ns())
   local gridfs = self.cnn:gridfs()
-  for v in gridfs:list():results() do gridfs:remove_file(v.filename) end
+  for v in gridfs:list():results() do
+    if not v.filename:match(match_str) or remove_all then
+      gridfs:remove_file(v.filename)
+    end
+  end
   self.finished = true
 end
 
@@ -325,6 +352,7 @@ function server_methods:configure(params)
   local dbname = self.dbname
   local taskfn,mapfn,partitionfn,reducefn,finalfn
   local scripts = {}
+  self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
   for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do

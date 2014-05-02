@@ -8,6 +8,7 @@ local job = {
 local STATUS = utils.STATUS
 local grp_tmp_dir = utils.GRP_TMP_DIR
 local serialize_sorted_by_lines = utils.serialize_sorted_by_lines
+local gridfs_lines_iterator = utils.gridfs_lines_iterator
 
 -- PRIVATE FUNCTIONS AND METHODS
 
@@ -143,7 +144,8 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         local part_key = key
         local job_file = value.file
         local res_file = value.result
-        local tmpname = os.tmpname()
+        local tmpname  = os.tmpname()
+        local gridfs   = obj.cnn:gridfs()
         local gridfile = gridfs:find_file(res_file)
         local f
         if gridfile then
@@ -154,18 +156,24 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         else
           f = io.open(tmpname, "w")
         end
+        local counter = 0
         for line in gridfs_lines_iterator(obj.cnn:gridfs(), job_file) do
+          counter = counter + 1
           local k,v = load(line)()
           local v = g(k,v) -- executes the REDUCE function
           assert(v, "Reduce must return a value")
           f:write(string.format("return %s,%s\n",
                                 utils.escape(k), utils.escape(v)))
+          if counter % utils.MAX_IT_WO_CGARBAGE then
+            collectgarbage("collect")
+          end
         end
         f:close()
         -- job is marked as finished, but not as written
         job_mark_as_finished(obj)
         gridfs:store_file(tmpname,res_file)
         job_mark_as_written(obj)
+        os.remove(tmpname)
       end
     end
   end
