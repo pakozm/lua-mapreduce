@@ -88,7 +88,6 @@ local function gridfs_lines_iterator(gridfs, filename)
   local num_chunks    = gridfile:num_chunks()
   local chunk,data
   return function()
-    collectgarbage("collect")
     if current_chunk < num_chunks then
       chunk = chunk or gridfile:chunk(current_chunk)
       if current_pos < chunk:len() then
@@ -234,7 +233,6 @@ local function merge_gridfs_files(db, gridfs,
       local pos = take_next(equals_list[1])
       if pos then current_pos[equals_list[1]] = pos end
     else
-      collectgarbage("collect")
       local key_str = escape(data[equals_list[1]][1])
       local result = {}
       for _,which in ipairs(equals_list) do
@@ -252,12 +250,12 @@ local function merge_gridfs_files(db, gridfs,
       local pos = 0
       for i=1,#filenames do pos = pos + current_pos[i] end
       pos = math.min(pos,total_size)
-      io.stderr:write(string.format("\r\t\t%6.1f %% ",
+      io.stderr:write(string.format("\r\t%6.1f %% ",
                                     pos/total_size*100))
       io.stderr:flush()
     end
   end
-  io.stderr:write(string.format("\r\t\t%6.1f %% \n", 100))
+  io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
   io.stderr:flush()
   f:close()
   -- insert all the remaining pending results
