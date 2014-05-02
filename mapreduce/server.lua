@@ -242,8 +242,8 @@ local function merge_gridfs_files(db, gridfs,
     -- verbose output
     if counter % 1000 == 0 then
       local pos = 0
-      for i=1,#filenames do pos = pos + current_chunk[i] - 1 end
-      pos = math.max(0,pos)
+      for i=1,#filenames do pos = pos + current_chunk[i] end
+      pos = math.max(0,pos-1)
       io.stderr:write(string.format("\r\t\t%6.1f %% ",
                                     pos/total_chunks*100))
       io.stderr:flush()
