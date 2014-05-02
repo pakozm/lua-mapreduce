@@ -139,7 +139,10 @@ local function get_key_from_line(line)
   return key
 end
 
-local function merge_gridfs_files(gridfs, filenames, result_filename)
+local function merge_gridfs_files(db, gridfs,
+                                  filenames, result_filename,
+                                  red_results_ns)
+  local pending_red_results = {}
   local tmpname = os.tmpname()
   local f = io.open(tmpname, "w")
   -- initializes all the line iterators (one for each file)
@@ -187,14 +190,31 @@ local function merge_gridfs_files(gridfs, filenames, result_filename)
     end
     return list
   end
+  -- checks the number of pending results and inserts them if necessary
+  function check_pending_results(max)
+    if #pending_red_results > max then
+      db:insert_batch(red_results_ns, pending_red_results)
+      pending_red_results = {}
+      collectgarbage("collect")
+    end
+  end
   -- initialize data with first line over all files
   for i=1,#filenames do take_next(i) end
   -- merge all the files until finished
   while not finished() do
     local equals_list = search_equals()
     if #equals_list == 1 then
-      f:write(data[equals_list[1]][3])
-      f:write("\n")
+      if #data[equals_list[1]][2] == 1 then
+        -- take note in pending_red_results table when not reduce is necessary
+        table.insert(pending_red_results,
+                     { _id   = data[equals_list[1]][1],
+                       value = data[equals_list[1]][2][1] })
+        check_pending_results(utils.MAX_PENDING_INSERTS)
+      else
+        -- insert in the gridfs file when reduce is necessary
+        f:write(data[equals_list[1]][3])
+        f:write("\n")
+      end
       take_next(equals_list[1])
     else
       collectgarbage("collect")
@@ -211,6 +231,9 @@ local function merge_gridfs_files(gridfs, filenames, result_filename)
     end
   end
   f:close()
+  -- insert all the remaining pending results
+  check_pending_results(0)
+  -- store the file in gridfs and remove temporal local file
   gridfs:remove_file(result_filename)
   gridfs:store_file(tmpname, result_filename)
   os.remove(tmpname)
@@ -233,7 +256,9 @@ local function server_prepare_reduce(self)
     end
   end
   io.stderr:write("# \t MERGE\n")
-  merge_gridfs_files(gridfs, filenames, group_result)
+  merge_gridfs_files(db, gridfs,
+                     filenames, group_result,
+                     self.task:get_red_results_ns())
   io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from aggregated map results. reduce
   -- jobs are described as a position in a gridfs file
