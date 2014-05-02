@@ -195,7 +195,9 @@ function task:take_next_job(tmpname)
     time = t,
     status = STATUS.RUNNING,
   }
+  local multiple_documents = false
   if self.tbl.status == TASK_STATUS.REDUCE then
+    multiple_documents = true
     query["value.first_chunk"] = { ["$gte"] = self.chunk }
     query["value.last_chunk"]  = { ["$lte"] = self.chunk }
     while db:count(jobs_ns, query) == 0 and self.chunk < self.tbl.last_chunk do
@@ -209,8 +211,8 @@ function task:take_next_job(tmpname)
                     {
                       ["$set"] = set_query,
                     },
-                    false,    -- no create a new document if not exists
-                    false) )  -- only update the first match
+                    false, -- no create a new document if not exists
+                    multiple_documents) )  -- only update the first match
   -- FIXME: be careful, this call could fail if the secondary server don't has
   -- updated its data
   local job_tbl = db:find_one(jobs_ns, set_query)
