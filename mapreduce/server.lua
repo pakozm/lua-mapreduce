@@ -86,7 +86,7 @@ local function gridfs_lines_iterator(gridfs, filename)
   local current_chunk = 0
   local current_pos   = 1
   local num_chunks    = gridfile:num_chunks()
-  local chunk
+  local chunk,data
   return function()
     collectgarbage("collect")
     if current_chunk < num_chunks then
@@ -100,7 +100,7 @@ local function gridfs_lines_iterator(gridfs, filename)
         local found_line = false
         repeat
           chunk = chunk or gridfile:chunk(current_chunk)
-          local data  = chunk:data()
+          data  = data  or chunk:data()
           local match = data:match("^([^\n]*)\n", current_pos)
           if match then
             table.insert(tbl, match)
@@ -119,7 +119,7 @@ local function gridfs_lines_iterator(gridfs, filename)
           if current_pos > chunk:len() then
             current_chunk = current_chunk + 1
             current_pos   = 1
-            chunk         = nil
+            chunk,data    = nil,nil
             collectgarbage("collect")
           end
           -- avoids to process empty lines
