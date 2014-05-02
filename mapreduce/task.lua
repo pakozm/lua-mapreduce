@@ -33,21 +33,6 @@ end
 
 -- PUBLIC METHODS
 
-function task:map_results_iterator()
-  local db = self.cnn:connect()
-  local all_collections = db:get_collections(self.cnn:get_dbname())
-  local i=0
-  return function()
-    while i < #all_collections do
-      i=i+1
-      local name = all_collections[i]
-      if name:match("%.map_results%.") then
-        return name
-      end
-    end
-  end
-end
-
 function task:create_collection(task_status, params)
   local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },

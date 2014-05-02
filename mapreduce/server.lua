@@ -3,8 +3,6 @@ local server = {
   _NAME = "mapreduce.server",
 }
 
-local grp_tmp_dir = "/tmp/grouped"
-
 local utils  = require "mapreduce.utils"
 local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
@@ -14,7 +12,9 @@ local DEFAULT_IP = utils.DEFAULT_IP
 local DEFAULT_DATE = utils.DEFAULT_DATE
 local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
-
+local grp_tmp_dir = utils.GRP_TMP_DIR
+local escape = utils.escape
+local serialize_table_ipairs = utils.serialize_table_ipairs
 local make_job = utils.make_job
 
 -- PRIVATE FUNCTIONS AND METHODS
@@ -26,6 +26,7 @@ local function make_task_coroutine_wrap(self,ns)
   return coroutine.wrap(function()
                           repeat
                             local db = self.cnn:connect()
+                            -- FIXME: implement this count in one call
                             local M = db:count(ns, { status = STATUS.FINISHED }) + db:count(ns, { status = STATUS.GROUPED })
                             if M then
                               io.stderr:write(string.format("\r%6.1f %% ",
@@ -51,34 +52,6 @@ local function remove_collection_data(db,ns)
   return db:remove(ns, {}, false)
 end
 
-local function escape(str)
-  if type(str) == "number" then
-    return tostring(str)
-  else
-    str = assert(tostring(str),"Unable to convert to string map value")
-    return ( string.format("%q",str):gsub("\\\n","\\n") )
-  end
-end
-
-local function serialize_table_ipairs(t)
-  local result = {}
-  for _,v in ipairs(t) do
-    table.insert(result, escape(v))
-  end
-  return string.format("{%s}",table.concat(result, ","))
-end
-
-local function serialize_sorted_by_lines(f,result)
-  local keys = {} for k,_ in pairs(result) do table.insert(keys,k) end
-  table.sort(keys)
-  for _,key in ipairs(keys) do
-    local key_str = escape(key)
-    local value_str = serialize_table_ipairs(result[key])
-    f:write(string.format("return %s,%s\n", key_str, value_str))
-  end
-end
-
-
 -- insert the job in the mongo db and returns a coroutine ready to be executed
 -- as an iterator
 local function server_prepare_map(self)
@@ -103,29 +76,6 @@ local function server_prepare_map(self)
   self.task:set_task_status(TASK_STATUS.MAP)
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
   return make_task_coroutine_wrap(self, map_jobs_ns)
-end
-
--- aggregates all the map jobs which are finished
-local function server_group_finished_maps(self)
-  local db     = self.cnn:connect()
-  local gridfs = self.cnn:gridfs()
-  local task   = self.task
-  for results_ns,job in task:finished_jobs_iterator() do
-    local result = {}
-    for r in db:query(results_ns):results() do
-      local key,value = r.key,r.value
-      result[key] = (result[key] or {})
-      table.insert(result[key], value)
-    end
-    local tmpname = os.tmpname()
-    local f = io.open(tmpname,"w")
-    serialize_sorted_by_lines(f,result)
-    f:close()
-    gridfs:store_file(tmpname, string.format("%s/%s",grp_tmp_dir,results_ns))
-    os.remove(tmpname)
-    job:mark_as_grouped()
-    db:drop_collection(results_ns)
-  end
 end
 
 -- iterates over all the lines of a given gridfs filename, and returns the first
@@ -330,7 +280,6 @@ local function server_final(self)
   self.finalfn.func(q, db, results_ns)
   -- drop collections, except reduce result and task status
   db:drop_collection(task:get_map_jobs_ns())
-  db:drop_collection(task:get_map_results_ns())
   db:drop_collection(task:get_red_jobs_ns())
   db:drop_collection(task:get_red_results_ns())
   local gridfs = self.cnn:gridfs()
@@ -393,10 +342,8 @@ function server_methods:loop()
   io.stderr:write("# MAP execution\n")
   while do_map_step() do
     utils.sleep(utils.DEFAULT_SLEEP)
-    server_group_finished_maps(self)
     collectgarbage("collect")
   end
-  server_group_finished_maps(self)
   collectgarbage("collect")
   io.stderr:write("# Preparing REDUCE\n")
   local do_reduce_step = server_prepare_reduce(self)

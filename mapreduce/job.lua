@@ -6,6 +6,8 @@ local job = {
 }
 
 local STATUS = utils.STATUS
+local grp_tmp_dir = utils.GRP_TMP_DIR
+local serialize_sorted_by_lines = utils.serialize_sorted_by_lines
 
 -- PRIVATE FUNCTIONS AND METHODS
 
@@ -74,8 +76,10 @@ local function job_get_func(self, fname, args)
     -- emit function is inserted in the environment of the function
     f.upvalue = v
   end
+  self.result = {}
   f.upvalue.emit = function(key, value)
-    return job_insert_result(self, key, value)
+    self.result[key] = self.result[key] or {}
+    table.insert(self.result[key], value)
   end
   return f.m.func
 end
@@ -90,6 +94,23 @@ local function job_mark_as_finished(self)
                     {
                       ["$set"] = {
                         status = STATUS.FINISHED,
+                        time = os.time(),
+                      },
+                    },
+                    false,
+                    false) )
+end
+
+function job_mark_as_grouped(self)
+  assert(self.job_tbl)
+  local db = self.cnn:connect()
+  assert( db:update(self.jobs_ns,
+                    {
+                      _id = self:get_id(),
+                    },
+                    {
+                      ["$set"] = {
+                        status = STATUS.GROUPED,
                         time = os.time(),
                       },
                     },
@@ -121,23 +142,6 @@ function job:get_results_ns()
   return self.results_ns
 end
 
-function job:mark_as_grouped()
-  assert(self.job_tbl)
-  local db = self.cnn:connect()
-  assert( db:update(self.jobs_ns,
-                    {
-                      _id = self:get_id(),
-                    },
-                    {
-                      ["$set"] = {
-                        status = STATUS.GROUPED,
-                        time = os.time(),
-                      },
-                    },
-                    false,
-                    false) )
-end
-
 -- constructor, receives a connection and a task instance
 function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
                     not_executable)
@@ -157,11 +161,22 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
     obj.results_ns = obj.results_ns .. ".K" .. key
     if not not_executable then
       fn = function()
-        g(key,value) -- executes the MAP function
-        if #obj.pending_inserts > 0 then
-          job_process_pending_inserts(obj)
-        end
-        job_mark_as_finished(obj)
+        g(key,value) -- executes the MAP function, the result is self.result
+        -- the job is not marked as finished, but yes as grouped
+        -- job_mark_as_finished(obj)
+        --
+        -- aggregates all the map job in a gridfs file
+        local results_ns = obj.results_ns
+        local result     = obj.result
+        local db         = obj.cnn:connect()
+        local gridfs     = obj.cnn:gridfs()
+        local tmpname    = os.tmpname()
+        local f = io.open(tmpname,"w")
+        serialize_sorted_by_lines(f,result)
+        f:close()
+        gridfs:store_file(tmpname, string.format("%s/%s",grp_tmp_dir,results_ns))
+        os.remove(tmpname)
+        job_mark_as_grouped(obj)
       end
     end
   elseif task_status == "REDUCE" then
