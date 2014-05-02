@@ -25,10 +25,6 @@ function cnn:get_dbname()
   return self.dbname
 end
 
-function cnn:get_gridfs_dbname()
-  return self.dbname
-end
-
 function cnn:__call(connection_string, dbname, auth_table)
   local obj = { connection_string = connection_string,
                 dbname = dbname,
