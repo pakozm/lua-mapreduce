@@ -210,6 +210,7 @@ local function merge_gridfs_files(gridfs, filenames, result_filename)
     end
   end
   f:close()
+  gridfs:remove_file(result_filename)
   gridfs:store_file(tmpname, result_filename)
   os.remove(tmpname)
 end
@@ -411,6 +412,7 @@ return "KEY4",{"hello\nworld"}
   end
   f:write("\n")
   f:close()
+  gridfs:remove_file(tmpname)
   gridfs:store_file(tmpname,tmpname)
   local f = io.open(tmpname)
   for g_line in gridfs_lines_iterator(gridfs,tmpname) do
@@ -436,6 +438,7 @@ return "KEY4",{"hello\nworld"}
   --
   for i,f in ipairs(list_files) do
     f:close()
+    gridfs:remove_file(list_tmpnames[i])
     gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
     os.remove(list_tmpnames[i])
   end

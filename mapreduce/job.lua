@@ -174,7 +174,9 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         local f = io.open(tmpname,"w")
         serialize_sorted_by_lines(f,result)
         f:close()
-        gridfs:store_file(tmpname, string.format("%s/%s",grp_tmp_dir,results_ns))
+        local gridfs_filename = string.format("%s/%s",grp_tmp_dir,results_ns)
+        gridfs:remove_file(gridfs_filename)
+        gridfs:store_file(tmpname, gridfs_filename)
         os.remove(tmpname)
         job_mark_as_grouped(obj)
       end
