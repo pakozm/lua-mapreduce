@@ -105,13 +105,13 @@ local function gridfs_lines_iterator(gridfs, filename)
           if match then
             table.insert(tbl, match)
             current_pos = #match + current_pos + 1 -- +1 because of the \n
-            abs_pos = abs_pos + #match + 1
+            abs_pos     = #match + abs_pos + 1
             found_line = true
           else -- if match ... then
             -- inserts the whole chunk substring, no \n match found
             table.insert(tbl, data:sub(current_pos, chunk:len()))
             current_pos = chunk:len() + 1 -- forces to go next chunk
-            abs_pos = abs_pos + chunk:len() - current_pos + 1
+            abs_pos     = abs_pos + chunk:len() - current_pos + 1
           end -- if match ... then else ...
           last_chunk_pos = current_pos - 1
           last_chunk = current_chunk
@@ -209,6 +209,7 @@ local function merge_gridfs_files(db, gridfs,
   local total_size = 0
   for i=1,#filenames do
     local pos,size = take_next(i)
+    if not pos then pos,size = 0,0 end
     current_pos[i] = pos
     total_size = total_size + size
   end
@@ -216,6 +217,7 @@ local function merge_gridfs_files(db, gridfs,
   local counter = 0
   while not finished() do
     counter = counter + 1
+    --
     local equals_list = search_equals()
     if #equals_list == 1 then
       if #data[equals_list[1]][2] == 1 then
@@ -249,7 +251,7 @@ local function merge_gridfs_files(db, gridfs,
     if counter % 1000 == 0 then
       local pos = 0
       for i=1,#filenames do pos = pos + current_pos[i] end
-      pos = math.max(pos,total_size)
+      pos = math.min(pos,total_size)
       io.stderr:write(string.format("\r\t\t%6.1f %% ",
                                     pos/total_size*100))
       io.stderr:flush()
