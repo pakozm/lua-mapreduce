@@ -123,6 +123,7 @@ local function gridfs_lines_iterator(gridfs, filename)
           end
           -- avoids to process empty lines
           if first_chunk == last_chunk and last_chunk_pos-first_chunk_pos < 2 then
+            tbl             = {}
             found_line      = false
             first_chunk     = current_chunk
             last_chunk      = current_chunk
