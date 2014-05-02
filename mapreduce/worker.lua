@@ -27,7 +27,6 @@ function worker_methods:execute()
       task:update()
       local task_status,job = task:take_next_job(self.tmpname)
       if job then
-        self.cnn:flush_pending_inserts(utils.MAX_PENDING_INSERTS)
         if not job_done then
           print("# NEW TASK READY")
         end
@@ -37,6 +36,7 @@ function worker_methods:execute()
         print("# \t\t FINISHED")
         job_done = true
       else -- if dbname then ... else
+        self.cnn:flush_pending_inserts(0)
         utils.sleep(utils.DEFAULT_SLEEP)
       end -- if dbname then ... else ... end
     until task:finished() -- repeat
