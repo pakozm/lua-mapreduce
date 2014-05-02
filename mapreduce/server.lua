@@ -81,6 +81,8 @@ end
 -- inside the corresponding chunks
 local function gridfs_lines_iterator(gridfs, filename)
   local gridfile = gridfs:find_file(filename)
+  local size          = #gridfile
+  local abs_pos       = 0
   local current_chunk = 0
   local current_pos   = 1
   local num_chunks    = gridfile:num_chunks()
@@ -103,11 +105,13 @@ local function gridfs_lines_iterator(gridfs, filename)
           if match then
             table.insert(tbl, match)
             current_pos = #match + current_pos + 1 -- +1 because of the \n
+            abs_pos = abs_pos + #match + 1
             found_line = true
           else -- if match ... then
             -- inserts the whole chunk substring, no \n match found
             table.insert(tbl, data:sub(current_pos, chunk:len()))
             current_pos = chunk:len() + 1 -- forces to go next chunk
+            abs_pos = abs_pos + chunk:len() - current_pos + 1
           end -- if match ... then else ...
           last_chunk_pos = current_pos - 1
           last_chunk = current_chunk
@@ -128,7 +132,7 @@ local function gridfs_lines_iterator(gridfs, filename)
           end
           --
         until found_line or current_chunk >= num_chunks
-        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,num_chunks
+        return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,abs_pos,size
       end -- if current_pos < chunk:len() ...
     end -- if current_chunk < gridfile:num_chunks() ...
   end -- return function()
@@ -155,11 +159,11 @@ local function merge_gridfs_files(db, gridfs,
   -- take the next data of a given file number
   local take_next = function(which)
     if line_iterators[which] then
-      local line,_,chunk,_,_,num_chunks = line_iterators[which]()
+      local line,_,_,_,_,pos,size = line_iterators[which]()
       if line then
         data[which] = data[which] or {}
         data[which][3],data[which][1],data[which][2] = line,load(line)()
-        return chunk,num_chunks
+        return pos,size
       else
         data[which] = nil
         line_iterators[which] = nil
@@ -201,12 +205,12 @@ local function merge_gridfs_files(db, gridfs,
   end
   -- initialize data with first line over all files, and count chunks for
   -- verbose output
-  local current_chunk = {}
-  local total_chunks = 0
+  local current_pos = {}
+  local total_size = 0
   for i=1,#filenames do
-    local _,num_chunks = take_next(i)
-    current_chunk[i] = 0
-    total_chunks = total_chunks + num_chunks
+    local pos,size = take_next(i)
+    current_pos[i] = pos
+    total_size = total_size + size
   end
   -- merge all the files until finished
   local counter = 0
@@ -225,7 +229,8 @@ local function merge_gridfs_files(db, gridfs,
         f:write(data[equals_list[1]][3])
         f:write("\n")
       end
-      current_chunk[equals_list[1]] = take_next(equals_list[1])
+      local pos = take_next(equals_list[1])
+      if pos then current_pos[equals_list[1]] = pos end
     else
       collectgarbage("collect")
       local key_str = escape(data[equals_list[1]][1])
@@ -234,7 +239,8 @@ local function merge_gridfs_files(db, gridfs,
         for _,v in ipairs(data[which][2]) do
           table.insert(result, v)
         end
-        current_chunk[which] = take_next(which)
+        local pos = take_next(which)
+        if pos then current_pos[which] = pos end
       end
       local value_str = serialize_table_ipairs(result)
       f:write(string.format("return %s,%s\n",key_str,value_str))
@@ -242,10 +248,10 @@ local function merge_gridfs_files(db, gridfs,
     -- verbose output
     if counter % 1000 == 0 then
       local pos = 0
-      for i=1,#filenames do pos = pos + current_chunk[i] end
-      pos = math.max(0,pos-1)
+      for i=1,#filenames do pos = pos + current_pos[i] end
+      pos = math.max(pos,total_size)
       io.stderr:write(string.format("\r\t\t%6.1f %% ",
-                                    pos/total_chunks*100))
+                                    pos/total_size*100))
       io.stderr:flush()
     end
   end
