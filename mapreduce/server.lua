@@ -116,6 +116,7 @@ local function gridfs_lines_iterator(gridfs, filename)
             current_chunk = current_chunk + 1
             current_pos   = 1
             chunk         = nil
+            collectgarbage("collect")
           end
           -- avoids to process empty lines
           if first_chunk == last_chunk and last_chunk_pos-first_chunk_pos < 2 then
