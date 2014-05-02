@@ -254,6 +254,7 @@ local function merge_gridfs_files(db, gridfs,
       io.stderr:write(string.format("\r\t%6.1f %% ",
                                     pos/total_size*100))
       io.stderr:flush()
+      collectgarbage("collect")
     end
   end
   io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
