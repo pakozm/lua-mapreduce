@@ -10,7 +10,7 @@ local grp_tmp_dir = utils.GRP_TMP_DIR
 local serialize_sorted_by_lines = utils.serialize_sorted_by_lines
 
 -- PRIVATE FUNCTIONS AND METHODS
-
+local cached_chunk_id,cached_chunk,cached_chunk_data
 local function take_value_from_gridfs(gridfs, chunk_value)
   local file = chunk_value.file
   local first_chunk = chunk_value.first_chunk
@@ -23,8 +23,16 @@ local function take_value_from_gridfs(gridfs, chunk_value)
   assert(first_chunk <= last_chunk)
   assert(last_chunk  <  gridfile:num_chunks())
   for i=first_chunk,last_chunk do
-    local chunk = assert( gridfile:chunk(i) )
-    local data = chunk:data()
+    -- take chunk and data from cached values or from file is case it was
+    -- necessary
+    local chunk,data
+    if i == cached_chunk_id then
+      chunk,data = cached_chunk,cached_chunk_data
+    else
+      chunk = assert( gridfile:chunk(i) )
+      data = assert( chunk:data() )
+      cached_chunk_id,cached_chunk,cached_chunk_data = i,chunk,data
+    end
     local from,to = 1,#data
     if i == first_chunk then
       assert(first_chunk_pos > 0 and first_chunk_pos <= #data)
