@@ -4,6 +4,6 @@ return {
     for key,value in it do
       print(value,key)
     end
-    -- return true -- indicates to remove mongo gridfs result files
+    return true -- indicates to remove mongo gridfs result files
   end
 }
