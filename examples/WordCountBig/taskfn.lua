@@ -4,7 +4,7 @@ return {
     for i,v in pairs(arg) do print(i,v) end
   end,
   func = function()
-    local f = io.popen("ls /home/experimentos/CORPORA/EUROPARL/*", "r")
+    local f = io.popen("ls /home/experimentos/CORPORA/EUROPARL/en-splits/*","r")
     local i=0
     for filename in f:lines() do
       i=i+1
