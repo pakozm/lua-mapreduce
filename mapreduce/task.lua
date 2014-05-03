@@ -47,6 +47,24 @@ function task:create_collection(task_status, params)
                     true, false) )
 end
 
+function task:insert_finished_time(t)
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { _id = "unique" },
+                    { ["$set"] = {
+                        finished_time = t,
+                    }, },
+                    false, false) )
+end
+
+function task:insert_started_time(t)
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { _id = "unique" },
+                    { ["$set"] = {
+                        started_time = t,
+                    }, },
+                    false, false) )
+end
+
 function task:update()
   local db = self.cnn:connect()
   local tbl = db:find_one(self.ns, { _id = "unique" })
@@ -132,40 +150,6 @@ end
 
 -- JOB INTERFACE
 
-function task:finished_jobs_iterator()
-  local db          = self.cnn:connect()
-  local map_jobs_ns = self:get_map_jobs_ns()
-  local cursor      = db:query(map_jobs_ns, { status = STATUS.FINISHED })
-  local task_status = self:get_task_status()
-  local jobs_ns     = self:get_jobs_ns()
-  local results_ns  = self:get_results_ns()
-  return function()
-    local job_tbl = cursor:next()
-    if job_tbl then
-      local job_obj = job(self.cnn, job_tbl, task_status,
-                          self:get_fname(), self:get_args(),
-                          jobs_ns, results_ns,
-                          true) -- not_executable=true
-      return job_obj:get_results_ns(),job_obj
-    end
-  end
-end
-
--- inserts a default job at the data base
-function task:insert_default_job(key, value)
-  assert(key~=nil and value~=nil, "Needs a key and a value")
-  local job_tbl ={
-    key = tostring(key) or error("Key must be convertible to string"),
-    value = value,
-    worker = utils.DEFAULT_HOSTNAME,
-    tmpname = utils.DEFAULT_TMPNAME,
-    time = os.time(),
-    status = utils.STATUS.WAITING,
-  }
-  local db = self.cnn:connect()
-  db:insert(self:get_jobs_ns(), job_tbl)
-end
-
 -- workers use this method to load a new job in the caller object
 function task:take_next_job(tmpname)
   local db = self.cnn:connect()
@@ -189,7 +173,7 @@ function task:take_next_job(tmpname)
   local set_query = {
     worker = utils.get_hostname(),
     tmpname = tmpname_summary(tmpname),
-    time = t,
+    started_time = t,
     status = STATUS.RUNNING,
   }
   -- FIXME: check the write concern

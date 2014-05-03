@@ -72,7 +72,7 @@ local function make_job(key, value)
     value = value,
     worker = utils.DEFAULT_HOSTNAME,
     tmpname = utils.DEFAULT_TMPNAME,
-    time = os.time(),
+    creation_time = os.time(),
     status = utils.STATUS.WAITING,
   }
 end
@@ -117,16 +117,19 @@ end
 local function gridfs_lines_iterator(gridfs, filename)
   local gridfile      = gridfs:find_file(filename)
   local size          = #gridfile
-  local abs_pos       = 0
   local current_chunk = 0
   local current_pos   = 1
+  local abs_pos       = 0
   local num_chunks    = gridfile:num_chunks()
   local chunk,data
   return function()
-    local gridfs = gridfs -- capture the gridfs to avoid garbage collection
+    -- capture the variables to avoid garbage collection, and to improve
+    -- performance
+    local gridfs = gridfs
+    local gridfile = gridfile
     if current_chunk < num_chunks then
       chunk = chunk or gridfile:chunk(current_chunk)
-      if current_pos < chunk:len() then
+      if current_pos <= chunk:len() then
         local first_chunk = current_chunk
         local last_chunk  = current_chunk
         local first_chunk_pos = current_pos
@@ -136,6 +139,7 @@ local function gridfs_lines_iterator(gridfs, filename)
         repeat
           chunk = chunk or gridfile:chunk(current_chunk)
           data  = data  or chunk:data()
+          local chunk_len = chunk:len()
           local match = data:match("^([^\n]*)\n", current_pos)
           if match then
             table.insert(tbl, match)
@@ -144,14 +148,14 @@ local function gridfs_lines_iterator(gridfs, filename)
             found_line = true
           else -- if match ... then
             -- inserts the whole chunk substring, no \n match found
-            table.insert(tbl, data:sub(current_pos, chunk:len()))
-            current_pos = chunk:len() + 1 -- forces to go next chunk
-            abs_pos     = abs_pos + chunk:len() - current_pos + 1
+            table.insert(tbl, data:sub(current_pos, chunk_len))
+            current_pos = chunk_len + 1 -- forces to go next chunk
+            abs_pos     = abs_pos + #tbl[#tbl]
           end -- if match ... then else ...
           last_chunk_pos = current_pos - 1
           last_chunk = current_chunk
           -- go to next chunk if we are at the end
-          if current_pos > chunk:len() then
+          if current_pos > chunk_len then
             current_chunk = current_chunk + 1
             current_pos   = 1
             chunk,data    = nil,nil
@@ -170,6 +174,9 @@ local function gridfs_lines_iterator(gridfs, filename)
         return table.concat(tbl),first_chunk,last_chunk,first_chunk_pos,last_chunk_pos,abs_pos,size
       end -- if current_pos < chunk:len() ...
     end -- if current_chunk < gridfile:num_chunks() ...
+    assert(abs_pos == size,
+           string.format("Unexpected end-of-file (found %d != expected %d): %s\n",
+                         abs_pos, size, filename))
   end -- return function()
 end
 

@@ -47,7 +47,7 @@ local function job_mark_as_finished(self)
                     {
                       ["$set"] = {
                         status = STATUS.FINISHED,
-                        time = os.time(),
+                        finished_time = os.time(),
                       },
                     },
                     false,
@@ -64,7 +64,7 @@ function job_mark_as_written(self)
                     {
                       ["$set"] = {
                         status = STATUS.WRITTEN,
-                        time = os.time(),
+                        written_time = os.time(),
                       },
                     },
                     false,
@@ -121,7 +121,7 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         -- combiner, apply the reduce function before put result to database
         local combiner = (combiner_fname and job_get_func(obj, combiner_fname,
                                                           combiner_args))
-        -- aggregates all the map job in a gridfs file
+        -- aggregates all the map job in a gridfs file, using the combiner
         local result     = obj.result or {}
         local db         = obj.cnn:connect()
         local gridfs     = obj.cnn:gridfs()
@@ -157,7 +157,7 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
           f = io.open(tmpname, "w")
         end
         local counter = 0
-        for line in gridfs_lines_iterator(obj.cnn:gridfs(), job_file) do
+        for line in gridfs_lines_iterator(gridfs, job_file) do
           counter = counter + 1
           local k,v = load(line)()
           local v = g(k,v) -- executes the REDUCE function

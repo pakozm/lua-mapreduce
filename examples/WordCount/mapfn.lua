@@ -1,5 +1,5 @@
 return {
-  init = function() print("Hello World") end,
+  init = function() end,
   func = function(key,value)
     for line in io.lines(value) do
       for w in line:gmatch("[^%s]+") do

@@ -50,13 +50,8 @@ local function remove_pending_tasks(db,ns)
                    false)
 end
 
--- removes all the tasks at the given collection
-local function remove_collection_data(db,ns)
-  return db:remove(ns, {}, false)
-end
-
--- insert the job in the mongo db and returns a coroutine ready to be executed
--- as an iterator
+-- insert jobs in mongo db and returns a coroutine ready to be executed as an
+-- iterator
 local function server_prepare_map(self)
   local db = self.cnn:connect()
   local map_jobs_ns = self.task:get_map_jobs_ns()
@@ -64,12 +59,12 @@ local function server_prepare_map(self)
   -- create map tasks in mongo database
   local f = self.taskfn.func
   local count = 0
+  local keys_check = {}
   for key,value in coroutine.wrap(f) do
     count = count + 1
     assert(tostring(key), "taskfn must return a string key")
-    -- FIXME: check what happens when the insert is a duplicate of an existing
-    -- key
-    
+    assert(not keys_check[key], string.format("Duplicate key: %s", key))
+    keys_check[key] = true
     -- FIXME: check how to process task keys which are defined by a previously
     -- broken execution and didn't belong to the current task execution
     assert( db:insert(map_jobs_ns, make_job(key,value)) )
@@ -84,6 +79,8 @@ local function get_key_from_line(line)
   return key
 end
 
+-- this function merge all the map results, and applies the partitioning
+-- function in order to balance the reduce execution
 local function merge_gridfs_files(cnn, db, gridfs,
                                   filenames, part_func,
                                   result_ns)
@@ -118,16 +115,17 @@ local function merge_gridfs_files(cnn, db, gridfs,
     end
     return ret
   end
-  -- look for all the data which has equal key
-  local search_equals = function()
+  -- look for all the data which has the min key
+  local search_min = function()
     local key
     local list = {}
     for i=1,#filenames do
       if data[i] then
-        if not key or data[i][1] <= key then
-          if not key or data[i][1] < key then list = {} end
+        local current = data[i][1]
+        if not key or current <= key then
+          if not key or current < key then list = {} end
           table.insert(list,i)
-          key = data[i][1]
+          key = current
         end
       end
     end
@@ -164,34 +162,34 @@ local function merge_gridfs_files(cnn, db, gridfs,
   while not finished() do
     counter = counter + 1
     --
-    local equals_list = search_equals()
-    assert(#equals_list > 0)
-    local key = data[equals_list[1]][1]
+    local mins_list = search_min()
+    assert(#mins_list > 0)
+    local key = data[mins_list[1]][1]
     local part_key = assert(tonumber(part_func(key)),
                             "Partition key must be a number")
     assert(math.floor(part_key) == part_key,
            "Partition key must be an integer")
-    if #equals_list == 1 then
-      if #data[equals_list[1]][2] == 1 then
-        -- take note in pending_red_results table when not reduce is necessary
+    if #mins_list == 1 then
+      if #data[mins_list[1]][2] == 1 then
+        -- put data in results file when not reduce is necessary
         red_result_files[part_key] = red_result_files[part_key] or
           io.open(make_res_filename(part_key),"w")
         red_result_files[part_key]:write(string.format("return %s,%s\n",
-                                                       escape(data[equals_list[1]][1]),
-                                                       escape(data[equals_list[1]][2][1])))
+                                                       escape(data[mins_list[1]][1]),
+                                                       escape(data[mins_list[1]][2][1])))
       else
-        -- insert in the gridfs file when reduce is necessary
+        -- put data in job file when reduce is necessary
         red_job_files[part_key] = red_job_files[part_key] or
           io.open(make_job_filename(part_key),"w")
-        red_job_files[part_key]:write(data[equals_list[1]][3])
+        red_job_files[part_key]:write(data[mins_list[1]][3])
         red_job_files[part_key]:write("\n")
       end
-      local pos = take_next(equals_list[1])
-      if pos then current_pos[equals_list[1]] = pos end
+      local pos = take_next(mins_list[1])
+      if pos then current_pos[mins_list[1]] = pos end
     else
-      local key_str = escape(data[equals_list[1]][1])
+      local key_str = escape(data[mins_list[1]][1])
       local result = {}
-      for _,which in ipairs(equals_list) do
+      for _,which in ipairs(mins_list) do
         for _,v in ipairs(data[which][2]) do
           table.insert(result, v)
         end
@@ -238,9 +236,7 @@ local function merge_gridfs_files(cnn, db, gridfs,
     os.remove(fname)
   end
   -- remove all map result gridfs files
-  for _,name in ipairs(filenames) do
-    gridfs:remove_file(name)
-  end  
+  -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
 end
 
 -- insert the job in the mongo db and returns a coroutine
@@ -250,9 +246,11 @@ local function server_prepare_reduce(self)
   local dbname = self.cnn:get_dbname()
   local red_jobs_ns = self.task:get_red_jobs_ns()
   remove_pending_tasks(db, red_jobs_ns)
-  -- group map results depending in the partition function
+  -- take all filenames which match with the grp_tmp_dir in gridfs (all map
+  -- results are there)
   local filenames = {}
-  for obj in gridfs:list():results() do
+  local list = gridfs:list()
+  for obj in list:results() do
     local filename = obj.filename
     if filename:match(string.format("^%s",grp_tmp_dir)) then
       table.insert(filenames, filename)
@@ -260,6 +258,9 @@ local function server_prepare_reduce(self)
   end
   -- if #filenames == 0 all data has been processed, avoid merge
   if #filenames > 0 then
+    -- FIXME: check that #filenames == number of map jobs
+    
+    -- group map results depending in the partition function
     io.stderr:write("# \t MERGE AND PARTITIONING\n")
     merge_gridfs_files(self.cnn, db, gridfs,
                        filenames, self.partitionfn.func,
@@ -268,9 +269,15 @@ local function server_prepare_reduce(self)
   end
   io.stderr:write("# \t CREATING JOBS\n")
   -- create reduce jobs in mongo database, from partitioned space
-  for v in gridfs:list():results() do
+  local keys_check = {}
+  local list = gridfs:list()
+  for v in list:results() do
     if v.filename:match(string.format("^%s",red_job_tmp_dir)) then
       local part_key = assert(tonumber(v.filename:match("^.*.K(%d+)$")))
+      assert(not keys_check[part_key],
+             string.format("Duplicate key: %s, file: %s",
+                           part_key, v.filename))
+      keys_check[part_key] = true
       local value = {
         file   = v.filename,
         result = string.format("%s.K%d",self.result_ns,part_key),
@@ -287,11 +294,16 @@ local function server_prepare_reduce(self)
 end
 
 local function server_drop_collections(self)
-  local db = self:connect()
+  local db = self.cnn:connect()
   local dbname = db:get_dbname()
   -- drop all the collections
   for _,name in ipairs(db:get_collections(dbname)) do
     db:drop_collection(name)
+  end
+  local gridfs = self.cnn:gridfs()
+  local list = gridfs:list()
+  for v in list:results() do
+    gridfs:remove_file(v.filename)
   end
 end
 
@@ -306,6 +318,8 @@ local function server_final(self)
   local files = gridfs:list()
   local current_file
   local lines_iterator
+  -- iterator which is given to final function, allows to traverse all the
+  -- results by pairs key,value
   local pair_iterator = function()
     local line
     repeat
@@ -326,11 +340,11 @@ local function server_final(self)
   local remove_all = self.finalfn.func(pair_iterator)
   -- drop collections, except reduce result and task status
   local db = self.cnn:connect()
-  db:drop_collection(task:get_map_jobs_ns())
-  db:drop_collection(task:get_red_jobs_ns())
-  db:drop_collection(task:get_red_results_ns())
+  -- db:drop_collection(task:get_map_jobs_ns())
+  -- db:drop_collection(task:get_red_jobs_ns())
   local gridfs = self.cnn:gridfs()
-  for v in gridfs:list():results() do
+  local list = gridfs:list()
+  for v in list:results() do
     if not v.filename:match(match_str) or remove_all then
       gridfs:remove_file(v.filename)
     end
@@ -392,6 +406,8 @@ end
 -- are done
 function server_methods:loop()
   local time = os.time()
+  self.task:insert_started_time(time)
+  -- MAP EXECUTION
   io.stderr:write("# Preparing MAP\n")
   local do_map_step = server_prepare_map(self)
   collectgarbage("collect")
@@ -400,6 +416,7 @@ function server_methods:loop()
     utils.sleep(utils.DEFAULT_SLEEP)
     collectgarbage("collect")
   end
+  -- REDUCE EXECUTION
   collectgarbage("collect")
   io.stderr:write("# Preparing REDUCE\n")
   local do_reduce_step = server_prepare_reduce(self)
@@ -409,10 +426,14 @@ function server_methods:loop()
     utils.sleep(utils.DEFAULT_SLEEP)
     collectgarbage("collect")
   end
+  -- FINAL EXECUTION
   io.stderr:write("# FINAL execution\n")
   collectgarbage("collect")
   server_final(self)
-  local total_time = os.time() - time
+  local end_time = os.time()
+  local total_time = end_time - time
+  self.task:insert_finished_time(end_time)
+  --
   io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
 end
 

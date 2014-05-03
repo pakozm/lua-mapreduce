@@ -1,6 +1,6 @@
 -- arg is for configuration purposes, it is allowed in any of the scripts
 local init = function(arg)
-  for i,v in pairs(arg) do print(i,v) end
+  -- do whatever you need for initialization parametrized by arg table
 end
 return {
   init = init,
