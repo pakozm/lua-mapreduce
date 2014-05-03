@@ -48,6 +48,7 @@ function task:create_collection(task_status, params)
 end
 
 function task:insert_finished_time(t)
+  local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = {
                         finished_time = t,
@@ -56,6 +57,7 @@ function task:insert_finished_time(t)
 end
 
 function task:insert_started_time(t)
+  local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = {
                         started_time = t,
