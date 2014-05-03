@@ -115,7 +115,7 @@ end
 -- and last chunks where the line is contained, and the first and last position
 -- inside the corresponding chunks
 local function gridfs_lines_iterator(gridfs, filename)
-  local gridfile = gridfs:find_file(filename)
+  local gridfile      = gridfs:find_file(filename)
   local size          = #gridfile
   local abs_pos       = 0
   local current_chunk = 0
@@ -123,6 +123,7 @@ local function gridfs_lines_iterator(gridfs, filename)
   local num_chunks    = gridfile:num_chunks()
   local chunk,data
   return function()
+    local gridfs = gridfs -- capture the gridfs to avoid garbage collection
     if current_chunk < num_chunks then
       chunk = chunk or gridfile:chunk(current_chunk)
       if current_pos < chunk:len() then
