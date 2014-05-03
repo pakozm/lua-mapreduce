@@ -121,7 +121,7 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         -- combiner, apply the reduce function before put result to database
         local combiner = (combiner_fname and job_get_func(obj, combiner_fname,
                                                           combiner_args))
-        -- aggregates all the map job in a gridfs file
+        -- aggregates all the map job in a gridfs file, using the combiner
         local result     = obj.result or {}
         local db         = obj.cnn:connect()
         local gridfs     = obj.cnn:gridfs()
