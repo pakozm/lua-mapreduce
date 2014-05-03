@@ -391,6 +391,7 @@ end
 -- makes all the map-reduce process, looping into the coroutines until all tasks
 -- are done
 function server_methods:loop()
+  local time = os.time()
   io.stderr:write("# Preparing MAP\n")
   local do_map_step = server_prepare_map(self)
   collectgarbage("collect")
@@ -411,6 +412,8 @@ function server_methods:loop()
   io.stderr:write("# FINAL execution\n")
   collectgarbage("collect")
   server_final(self)
+  local total_time = os.time() - time
+  io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
 end
 
 -- SERVER METATABLE
