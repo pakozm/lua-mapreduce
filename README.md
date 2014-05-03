@@ -202,6 +202,68 @@ return {
 }
 ```
 
+Performance notes
+-----------------
+
+Word-count example using [Europarl v7 English data](http://www.statmt.org/europarl/),
+with *1,965,734 lines* and *49,158,635 running words*. The data has been splitted
+in 197 files with a maximum of *10,000* lines per file. The task is executed
+in *one machine* with *four cores*. The machine runs a MongoDB server, a
+lua-mapreduce server and four lua-mapreduce workers. **Note** that this task
+is not fair because the process could be done in main memory.
+
+The output of lua-mapreduce was:
+
+```
+$ ./execute_BIG_server.sh  > output
+# Iteration 1
+#        Preparing MAP
+#        MAP execution
+          100.0 %
+#        Preparing REDUCE
+#                Merge and partitioning
+                  100.0 %
+#                Creating jobs
+#        REDUCE execution
+          100.0 %
+#        FINAL execution
+# 70 seconds
+```
+
+**Note:** using only one worker takes: 117 seconds
+
+A naive word-count version implemented with pipes and shellscripts takes:
+
+```
+$ time cat /home/experimentos/CORPORA/EUROPARL/en-splits/* | \
+  tr ' ' '\n'  | sort | uniq -c > output-pipes
+real    2m21.272s
+user    2m23.339s
+sys     0m2.951s
+```
+
+A naive word-count version implemented in Lua takes:
+
+```
+$ time cat /home/experimentos/CORPORA/EUROPARL/en-splits/* | \
+  lua naive.lua > output-naivetime
+real    0m17.604s
+user    0m17.064s
+sys     0m1.445s
+```
+
+Looking to these numbers, it is clear that the better is to work in
+main memory, as in the naive Lua implementation, which needs only
+18 seconds. The map-reduce approach takes 70 seconds with four
+workers and 117 seconds with only one worker. These last two numbers
+are comparable with the naive shellscript implementation using pipes,
+which takes 141 seconds. Concluding, the preliminar lua-mapreduce
+implementation, using MongoDB for communication and disk files as
+auxiliary storage, is between a **17%** and **50%** faster than a
+shellscript implementation using pipes. In the future, a larger
+data task will be choosen to compare this implementation with raw
+map-reduce in MongoDB and/or Hadoop.
+
 Last notes
 ----------
 
