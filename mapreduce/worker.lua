@@ -31,12 +31,12 @@ function worker_methods:execute()
       local task_status,job = task:take_next_job(self.tmpname)
       if job then
         if not job_done then
-          print("# NEW TASK READY")
+          print("# New TASK ready")
         end
-        print(string.format("# \t EXECUTING %s JOB _id: %q",
+        print(string.format("# \t Executing %s job _id: %q",
                             task_status, job:status_string()))
         job:execute() -- MAP or REDUCE
-        print("# \t\t FINISHED")
+        print("# \t\t Finished")
         job_done = true
       else -- if dbname then ... else
         collectgarbage("collect")
@@ -46,7 +46,7 @@ function worker_methods:execute()
     until task:finished() -- repeat
     self.cnn:flush_pending_inserts()
     if job_done then
-      print("# TASK DONE")
+      print("# TASK done")
       iter       = 0
       ITER_SLEEP = utils.DEFAULT_SLEEP
       ntasks     = ntasks + 1

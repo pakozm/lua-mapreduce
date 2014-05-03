@@ -33,16 +33,19 @@ end
 
 -- PUBLIC METHODS
 
-function task:create_collection(task_status, params)
+function task:create_collection(task_status, params, iteration)
   local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = {
-                        status      = task_status,
+                        status        = task_status,
                         --
-                        mapfn       = params.mapfn,
-                        reducefn    = params.reducefn,
-                        map_args    = params.map_args,
-                        reduce_args = params.reduce_args,
+                        mapfn         = params.mapfn,
+                        reducefn      = params.reducefn,
+                        map_args      = params.map_args,
+                        reduce_args   = params.reduce_args,
+                        iteration     = iteration,
+                        started_time  = 0,
+                        finished_time = 0,
                     }, },
                     true, false) )
 end
@@ -89,6 +92,14 @@ function task:get_task_status()
   else
     return TASK_STATUS.FINISHED
   end
+end
+
+function task:has_status()
+  return self.tbl ~= nil
+end
+
+function task:get_iteration()
+  return self.tbl.iteration
 end
 
 function task:set_task_status(status, extra)

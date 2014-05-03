@@ -30,7 +30,7 @@ local function make_task_coroutine_wrap(self,ns)
                             local db = self.cnn:connect()
                             local M = db:count(ns, { status = STATUS.WRITTEN })
                             if M then
-                              io.stderr:write(string.format("\r%6.1f %% ",
+                              io.stderr:write(string.format("\r\t %6.1f %% ",
                                                             M/N*100))
                               io.stderr:flush()
                             end
@@ -207,13 +207,13 @@ local function merge_gridfs_files(cnn, db, gridfs,
       local pos = 0
       for i=1,#filenames do pos = pos + current_pos[i] end
       pos = math.min(pos,total_size)
-      io.stderr:write(string.format("\r\t%6.1f %% ",
+      io.stderr:write(string.format("\r\t\t %6.1f %% ",
                                     pos/total_size*100))
       io.stderr:flush()
       collectgarbage("collect")
     end
   end
-  io.stderr:write(string.format("\r\t%6.1f %% \n", 100))
+  io.stderr:write(string.format("\r\t\t %6.1f %% \n", 100))
   io.stderr:flush()
   -- close all the files and upload them to mongo gridfs
   for part_key,f in pairs(red_job_files) do
@@ -261,13 +261,13 @@ local function server_prepare_reduce(self)
     -- FIXME: check that #filenames == number of map jobs
     
     -- group map results depending in the partition function
-    io.stderr:write("# \t MERGE AND PARTITIONING\n")
+    io.stderr:write("# \t\t Merge and partitioning\n")
     merge_gridfs_files(self.cnn, db, gridfs,
                        filenames, self.partitionfn.func,
                        self.result_ns)
     collectgarbage("collect")
   end
-  io.stderr:write("# \t CREATING JOBS\n")
+  io.stderr:write("# \t\t Creating jobs\n")
   -- create reduce jobs in mongo database, from partitioned space
   local keys_check = {}
   local list = gridfs:list()
@@ -286,7 +286,6 @@ local function server_prepare_reduce(self)
     end
   end
   self.cnn:flush_pending_inserts(0)
-  io.stderr:write("# \t STARTING REDUCE\n")
   self.task:set_task_status(TASK_STATUS.REDUCE,
                             { last_chunk = max_chunk_value })
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
@@ -295,7 +294,7 @@ end
 
 local function server_drop_collections(self)
   local db = self.cnn:connect()
-  local dbname = db:get_dbname()
+  local dbname = self.cnn:get_dbname()
   -- drop all the collections
   for _,name in ipairs(db:get_collections(dbname)) do
     db:drop_collection(name)
@@ -313,8 +312,6 @@ local function server_final(self)
   -- necessary to escape them
   local match_str = string.format("^%s",self.result_ns)
   local gridfs = self.cnn:gridfs()
-  local task = self.task
-  task:set_task_status(TASK_STATUS.FINISHED)
   local files = gridfs:list()
   local current_file
   local lines_iterator
@@ -337,11 +334,25 @@ local function server_final(self)
       return load(line)()
     end
   end
-  local remove_all = self.finalfn.func(pair_iterator)
+  -- the reply could be: false/nil, true, "loop"
+  local reply = self.finalfn.func(pair_iterator)
+  local remove_all = (reply == true) or (reply == "loop")
+  if reply ~= "loop" and reply ~= true and reply ~= false and reply ~= nil then
+    io.stderr:write("# WARNING!!! INCORRECT FINAL RETURN: " ..
+                      tostring(reply) .. "\n")
+  end
   -- drop collections, except reduce result and task status
   local db = self.cnn:connect()
-  -- db:drop_collection(task:get_map_jobs_ns())
-  -- db:drop_collection(task:get_red_jobs_ns())
+  --
+  local task = self.task
+  if reply == "loop" then
+    io.stderr:write("# LOOP again\n")
+    db:drop_collection(task:get_map_jobs_ns())
+    db:drop_collection(task:get_red_jobs_ns())
+  else
+    self.finished = true
+    task:set_task_status(TASK_STATUS.FINISHED)
+  end
   local gridfs = self.cnn:gridfs()
   local list = gridfs:list()
   for v in list:results() do
@@ -349,7 +360,6 @@ local function server_final(self)
       gridfs:remove_file(v.filename)
     end
   end
-  self.finished = true
 end
 
 -- SERVER METHODS
@@ -358,6 +368,7 @@ local server_methods = {}
 -- configures the server with the script string
 function server_methods:configure(params)
   self.configured = true
+  self.configuration_params = params
   self.task_args = params.task_args
   self.map_args = params.map_args
   self.partition_args = params.partition_args
@@ -398,43 +409,78 @@ function server_methods:configure(params)
   if self.finalfn.init then self.finalfn.init(self.final_args) end
   self.mapfn = params.mapfn
   self.reducefn = params.reducefn
-  -- create task object
-  self.task:create_collection(TASK_STATUS.WAIT, params)
 end
 
 -- makes all the map-reduce process, looping into the coroutines until all tasks
 -- are done
 function server_methods:loop()
-  local time = os.time()
-  self.task:insert_started_time(time)
-  -- MAP EXECUTION
-  io.stderr:write("# Preparing MAP\n")
-  local do_map_step = server_prepare_map(self)
-  collectgarbage("collect")
-  io.stderr:write("# MAP execution\n")
-  while do_map_step() do
-    utils.sleep(utils.DEFAULT_SLEEP)
+  local it = 0
+  repeat
+    local skip_map,initialize=false,true
+    if it == 0 then
+      -- in the first iteration, we check if the task is a new fresh execution
+      -- or if a previous broken task exists
+      self.task:update()
+      if self.task:has_status() then
+        local status = self.task:get_task_status()
+        if status == TASK_STATUS.REDUCE then
+          -- if the task was in reduce state, skip map jobs and re-run reduce
+          io.stderr:write("# WARNING: TRYING TO RESTORE A BROKEN TASK\n")
+          skip_map   = true
+          initialize = false
+        elseif status == TASK_STATUS.FINISHED then
+          -- if the task was finished, therefore it is a shit, drop old data
+          server_drop_collections(self)
+        else
+          -- otherwise, the task is in WAIT or MAP states, try to restore from
+          -- there
+          initialize = false
+        end
+      end -- if task has status
+    end -- if it == 0
+    if initialize then
+      -- count one iteration
+      it = it+1
+      -- create task object
+      self.task:create_collection(TASK_STATUS.WAIT,
+                                  self.configuration_params, it)
+    else
+      it = self.task:get_iteration()
+    end
+    io.stderr:write(string.format("# Iteration %d\n", it))
+    local time = os.time()
+    self.task:insert_started_time(time)
+    if not skip_map then
+      -- MAP EXECUTION
+      io.stderr:write("# \t Preparing MAP\n")
+      local do_map_step = server_prepare_map(self)
+      collectgarbage("collect")
+      io.stderr:write("# \t MAP execution\n")
+      while do_map_step() do
+        utils.sleep(utils.DEFAULT_SLEEP)
+        collectgarbage("collect")
+      end
+    end
+    -- REDUCE EXECUTION
     collectgarbage("collect")
-  end
-  -- REDUCE EXECUTION
-  collectgarbage("collect")
-  io.stderr:write("# Preparing REDUCE\n")
-  local do_reduce_step = server_prepare_reduce(self)
-  collectgarbage("collect")
-  io.stderr:write("# REDUCE execution\n")
-  while do_reduce_step() do
-    utils.sleep(utils.DEFAULT_SLEEP)
+    io.stderr:write("# \t Preparing REDUCE\n")
+    local do_reduce_step = server_prepare_reduce(self)
     collectgarbage("collect")
-  end
-  -- FINAL EXECUTION
-  io.stderr:write("# FINAL execution\n")
-  collectgarbage("collect")
-  server_final(self)
-  local end_time = os.time()
-  local total_time = end_time - time
-  self.task:insert_finished_time(end_time)
-  --
-  io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
+    io.stderr:write("# \t REDUCE execution\n")
+    while do_reduce_step() do
+      utils.sleep(utils.DEFAULT_SLEEP)
+      collectgarbage("collect")
+    end
+    -- FINAL EXECUTION
+    io.stderr:write("# \t FINAL execution\n")
+    collectgarbage("collect")
+    server_final(self)
+    local end_time = os.time()
+    local total_time = end_time - time
+    self.task:insert_finished_time(end_time)
+    --
+    io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
+  until self.finished
 end
 
 -- SERVER METATABLE
