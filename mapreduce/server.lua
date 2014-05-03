@@ -115,16 +115,17 @@ local function merge_gridfs_files(cnn, db, gridfs,
     end
     return ret
   end
-  -- look for all the data which has equal key
-  local search_equals = function()
+  -- look for all the data which has the min key
+  local search_min = function()
     local key
     local list = {}
     for i=1,#filenames do
       if data[i] then
-        if not key or data[i][1] <= key then
-          if not key or data[i][1] < key then list = {} end
+        local current = data[i][1]
+        if not key or current <= key then
+          if not key or current < key then list = {} end
           table.insert(list,i)
-          key = data[i][1]
+          key = current
         end
       end
     end
@@ -161,34 +162,34 @@ local function merge_gridfs_files(cnn, db, gridfs,
   while not finished() do
     counter = counter + 1
     --
-    local equals_list = search_equals()
-    assert(#equals_list > 0)
-    local key = data[equals_list[1]][1]
+    local mins_list = search_min()
+    assert(#mins_list > 0)
+    local key = data[mins_list[1]][1]
     local part_key = assert(tonumber(part_func(key)),
                             "Partition key must be a number")
     assert(math.floor(part_key) == part_key,
            "Partition key must be an integer")
-    if #equals_list == 1 then
-      if #data[equals_list[1]][2] == 1 then
+    if #mins_list == 1 then
+      if #data[mins_list[1]][2] == 1 then
         -- put data in results file when not reduce is necessary
         red_result_files[part_key] = red_result_files[part_key] or
           io.open(make_res_filename(part_key),"w")
         red_result_files[part_key]:write(string.format("return %s,%s\n",
-                                                       escape(data[equals_list[1]][1]),
-                                                       escape(data[equals_list[1]][2][1])))
+                                                       escape(data[mins_list[1]][1]),
+                                                       escape(data[mins_list[1]][2][1])))
       else
         -- put data in job file when reduce is necessary
         red_job_files[part_key] = red_job_files[part_key] or
           io.open(make_job_filename(part_key),"w")
-        red_job_files[part_key]:write(data[equals_list[1]][3])
+        red_job_files[part_key]:write(data[mins_list[1]][3])
         red_job_files[part_key]:write("\n")
       end
-      local pos = take_next(equals_list[1])
-      if pos then current_pos[equals_list[1]] = pos end
+      local pos = take_next(mins_list[1])
+      if pos then current_pos[mins_list[1]] = pos end
     else
-      local key_str = escape(data[equals_list[1]][1])
+      local key_str = escape(data[mins_list[1]][1])
       local result = {}
-      for _,which in ipairs(equals_list) do
+      for _,which in ipairs(mins_list) do
         for _,v in ipairs(data[which][2]) do
           table.insert(result, v)
         end
@@ -235,7 +236,7 @@ local function merge_gridfs_files(cnn, db, gridfs,
     os.remove(fname)
   end
   -- remove all map result gridfs files
-  for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
+  -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
 end
 
 -- insert the job in the mongo db and returns a coroutine
@@ -339,8 +340,8 @@ local function server_final(self)
   local remove_all = self.finalfn.func(pair_iterator)
   -- drop collections, except reduce result and task status
   local db = self.cnn:connect()
-  db:drop_collection(task:get_map_jobs_ns())
-  db:drop_collection(task:get_red_jobs_ns())
+  -- db:drop_collection(task:get_map_jobs_ns())
+  -- db:drop_collection(task:get_red_jobs_ns())
   local gridfs = self.cnn:gridfs()
   local list = gridfs:list()
   for v in list:results() do
@@ -405,6 +406,7 @@ end
 -- are done
 function server_methods:loop()
   local time = os.time()
+  self.task:insert_started_time(time)
   -- MAP EXECUTION
   io.stderr:write("# Preparing MAP\n")
   local do_map_step = server_prepare_map(self)
@@ -428,7 +430,9 @@ function server_methods:loop()
   io.stderr:write("# FINAL execution\n")
   collectgarbage("collect")
   server_final(self)
-  local total_time = os.time() - time
+  local end_time = os.time()
+  local total_time = end_time - time
+  self.task:insert_finished_time(end_time)
   --
   io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
 end

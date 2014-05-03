@@ -5,5 +5,4 @@ lua execute_server.lua django wordcountBIG \
     examples.WordCount.mapfn \
     examples.WordCount.partitionfn \
     examples.WordCount.reducefn \
-    examples.WordCount.finalfn |
-sort -n > output
+    examples.WordCount.finalfn
