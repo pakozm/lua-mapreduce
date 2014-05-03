@@ -259,9 +259,9 @@ workers and 117 seconds with only one worker. These last two numbers
 are comparable with the naive shellscript implementation using pipes,
 which takes 141 seconds. Concluding, the preliminar lua-mapreduce
 implementation, using MongoDB for communication and disk files as
-auxiliary storage, is between a **17%** and **50%** faster than a
+auxiliary storage, is between a **1.2** and **2** times faster than a
 shellscript implementation using pipes. In the future, a larger
-data task will be choosen to compare this implementation with raw
+data task will be choosen to compare this implementación with raw
 map-reduce in MongoDB and/or Hadoop.
 
 Last notes
