@@ -21,6 +21,10 @@ function cnn:gridfs()
   return gridfs
 end
 
+function cnn:grid_file_builder()
+  return mongo.GridFileBuilder.New(self:connect(), self.gridfs_dbname)
+end
+
 function cnn:get_dbname()
   return self.dbname
 end

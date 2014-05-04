@@ -107,7 +107,7 @@ local function serialize_sorted_by_lines(f,result,combiner)
   for _,key in ipairs(keys) do
     local key_str = escape(key)
     local value_str = serialize_table_ipairs(result[key])
-    f:write(string.format("return %s,%s\n", key_str, value_str))
+    f:append(string.format("return %s,%s\n", key_str, value_str))
   end
 end
 

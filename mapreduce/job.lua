@@ -125,14 +125,11 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         local result     = obj.result or {}
         local db         = obj.cnn:connect()
         local gridfs     = obj.cnn:gridfs()
-        local tmpname    = os.tmpname()
-        local f = io.open(tmpname,"w")
-        serialize_sorted_by_lines(f,result,combiner)
-        f:close()
         local gridfs_filename = string.format("%s/%s",grp_tmp_dir,results_ns)
         gridfs:remove_file(gridfs_filename)
-        gridfs:store_file(tmpname, gridfs_filename)
-        os.remove(tmpname)
+        local builder=obj.cnn:grid_file_builder()
+        serialize_sorted_by_lines(builder,result,combiner)
+        builder:build(gridfs_filename)
         -- job is marked as written to the database
         job_mark_as_written(obj)
       end
@@ -144,17 +141,13 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
         local part_key = key
         local job_file = value.file
         local res_file = value.result
-        local tmpname  = os.tmpname()
         local gridfs   = obj.cnn:gridfs()
         local gridfile = gridfs:find_file(res_file)
-        local f
+        local builder  = obj.cnn:grid_file_builder()
         if gridfile then
-          gridfile:write(tmpname)
-          gridfile = nil
-          gridfs:remove_file(res_file)
-          f = io.open(tmpname, "a")
-        else
-          f = io.open(tmpname, "w")
+          for i=1,gridfile:num_chunks() do
+            builder:append(gridfile:chunk(i-1):data())
+          end
         end
         local counter = 0
         for line in gridfs_lines_iterator(gridfs, job_file) do
@@ -162,18 +155,16 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
           local k,v = load(line)()
           local v = g(k,v) -- executes the REDUCE function
           assert(v, "Reduce must return a value")
-          f:write(string.format("return %s,%s\n",
-                                utils.escape(k), utils.escape(v)))
+          builder:append(string.format("return %s,%s\n",
+                                       utils.escape(k), utils.escape(v)))
           if counter % utils.MAX_IT_WO_CGARBAGE then
             collectgarbage("collect")
           end
         end
-        f:close()
-        -- job is marked as finished, but not as written
-        job_mark_as_finished(obj)
-        gridfs:store_file(tmpname,res_file)
+        gridfs:remove_file(res_file)
+        builder:build(res_file)
+        -- job is marked as as written directly
         job_mark_as_written(obj)
-        os.remove(tmpname)
       end
     end
   end

@@ -141,20 +141,9 @@ local function merge_gridfs_files(cnn, db, gridfs,
     current_pos[i] = pos
     total_size = total_size + size
   end
-  -- table with reduce job gridFiles
-  local job_tmpname = os.tmpname()
-  local res_tmpname = os.tmpname()
-  os.remove(job_tmpname)
-  os.remove(res_tmpname)
   --
   assert(not result_ns:match("^/tmp/"))
   --
-  function make_job_filename(part_key)
-    return string.format("%s.K%d",job_tmpname,part_key)
-  end
-  function make_res_filename(part_key)
-    return string.format("%s.K%d",res_tmpname,part_key)
-  end
   local red_job_files = {}
   local red_result_files = {}
   -- merge all the files until finished
@@ -173,16 +162,16 @@ local function merge_gridfs_files(cnn, db, gridfs,
       if #data[mins_list[1]][2] == 1 then
         -- put data in results file when not reduce is necessary
         red_result_files[part_key] = red_result_files[part_key] or
-          io.open(make_res_filename(part_key),"w")
-        red_result_files[part_key]:write(string.format("return %s,%s\n",
-                                                       escape(data[mins_list[1]][1]),
-                                                       escape(data[mins_list[1]][2][1])))
+          cnn:grid_file_builder()
+        red_result_files[part_key]:append(string.format("return %s,%s\n",
+                                                        escape(data[mins_list[1]][1]),
+                                                        escape(data[mins_list[1]][2][1])))
       else
         -- put data in job file when reduce is necessary
         red_job_files[part_key] = red_job_files[part_key] or
-          io.open(make_job_filename(part_key),"w")
-        red_job_files[part_key]:write(data[mins_list[1]][3])
-        red_job_files[part_key]:write("\n")
+          cnn:grid_file_builder()
+        red_job_files[part_key]:append(data[mins_list[1]][3])
+        red_job_files[part_key]:append("\n")
       end
       local pos = take_next(mins_list[1])
       if pos then current_pos[mins_list[1]] = pos end
@@ -198,9 +187,9 @@ local function merge_gridfs_files(cnn, db, gridfs,
       end
       local value_str = serialize_table_ipairs(result)
       red_job_files[part_key] = red_job_files[part_key] or
-        io.open(make_job_filename(part_key),"w")
-      red_job_files[part_key]:write(string.format("return %s,%s\n",
-                                                  key_str,value_str))
+        cnn:grid_file_builder()
+      red_job_files[part_key]:append(string.format("return %s,%s\n",
+                                                   key_str,value_str))
     end
     -- verbose output
     if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
@@ -217,23 +206,17 @@ local function merge_gridfs_files(cnn, db, gridfs,
   io.stderr:flush()
   -- close all the files and upload them to mongo gridfs
   for part_key,f in pairs(red_job_files) do
-    local fname = make_job_filename(part_key)
     local gridfs_name = string.format("%s.K%d",red_job_tmp_dir,part_key)
-    f:close()
     gridfs:remove_file(gridfs_name)
-    gridfs:store_file(fname, gridfs_name)
-    os.remove(fname)
+    f:build(gridfs_name)
     -- remove crashed results
     local gridfs_name = string.format("%s.K%d",result_ns,part_key)
     gridfs:remove_file(gridfs_name)
   end
   for part_key,f in pairs(red_result_files) do
-    local fname = make_res_filename(part_key)
     local gridfs_name = string.format("%s.K%d",result_ns,part_key)
-    f:close()
     gridfs:remove_file(gridfs_name)
-    gridfs:store_file(fname, gridfs_name)
-    os.remove(fname)
+    f:build(gridfs_name)
   end
   -- remove all map result gridfs files
   -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
@@ -508,6 +491,7 @@ server.utest = function(connection_string, dbname, auth_table)
     end,
     concat = function(self) return table.concat(self.tbl or {}) end,
   }
+  -- FIXME: that is totally broken now
   utils.serialize_sorted_by_lines(f,{
                                     KEY1 = {1,1,1,1,1},
                                     KEY2 = {1,1,1},
