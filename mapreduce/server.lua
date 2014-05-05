@@ -176,7 +176,7 @@ local function server_final(self)
   local list = gridfs:list()
   for v in list:results() do
     if not v.filename:match(match_str) or remove_all then
-      -- gridfs:remove_file(v.filename)
+      gridfs:remove_file(v.filename)
     end
   end
 end
