@@ -257,9 +257,9 @@ local function merge_iterator(gridfs, filenames)
           assert(data[which][1] == key)
           local v = data[which][2]
           for j=1,#v do table.insert(result, v[j]) end
+          local pos = take_next(which)
+          if pos then current_pos[which] = pos end
         end
-        local pos = take_next(which)
-        if pos then current_pos[which] = pos end
       end -- if #mins_list == 1 then ... else ... end
       -- verbose output
       if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
@@ -271,7 +271,7 @@ local function merge_iterator(gridfs, filenames)
         io.stderr:flush()
         collectgarbage("collect")
       end
-      return key,values
+      return key,result
     end -- while not finished()
     io.stderr:write(string.format("\r\t\t %6.1f %% \n", 100))
     io.stderr:flush()
@@ -295,5 +295,6 @@ utils.escape = escape
 utils.serialize_table_ipairs = serialize_table_ipairs
 utils.gridfs_lines_iterator = gridfs_lines_iterator
 utils.keys_sorted = keys_sorted
+utils.merge_iterator = merge_iterator
 
 return utils

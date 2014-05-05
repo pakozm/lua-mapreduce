@@ -53,12 +53,12 @@ end
 -- insert jobs in mongo db and returns a coroutine ready to be executed as an
 -- iterator
 local function server_prepare_map(self)
+  local count = 0
   local db = self.cnn:connect()
   local map_jobs_ns = self.task:get_map_jobs_ns()
   remove_pending_tasks(db, map_jobs_ns)
   -- create map tasks in mongo database
   local f = self.taskfn.func
-  local count = 0
   local keys_check = {}
   for key,value in coroutine.wrap(f) do
     count = count + 1
@@ -71,155 +71,7 @@ local function server_prepare_map(self)
   end
   self.task:set_task_status(TASK_STATUS.MAP)
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
-  return make_task_coroutine_wrap(self, map_jobs_ns)
-end
-
-local function get_key_from_line(line)
-  local key,value = load(line)()
-  return key
-end
-
--- this function merge all the map results, and applies the partitioning
--- function in order to balance the reduce execution
-local function merge_gridfs_files(cnn, db, gridfs,
-                                  filenames, part_func,
-                                  result_ns)
-  -- initializes all the line iterators (one for each file)
-  local line_iterators = {}
-  for _,name in ipairs(filenames) do
-    table.insert(line_iterators, gridfs_lines_iterator(gridfs,name))
-  end
-  local finished = false
-  local data = {}
-  -- take the next data of a given file number
-  local take_next = function(which)
-    if line_iterators[which] then
-      local line,_,_,_,_,pos,size = line_iterators[which]()
-      if line then
-        data[which] = data[which] or {}
-        data[which][3],data[which][1],data[which][2] = line,load(line)()
-        return pos,size
-      else
-        data[which] = nil
-        line_iterators[which] = nil
-      end
-    else
-      data[which] = nil
-    end
-  end
-  -- we finished when all the data is nil
-  local finished = function()
-    local ret = true
-    for i=1,#filenames do
-      if data[i] ~= nil then ret = false break end
-    end
-    return ret
-  end
-  -- look for all the data which has the min key
-  local search_min = function()
-    local key
-    local list = {}
-    for i=1,#filenames do
-      if data[i] then
-        local current = data[i][1]
-        if not key or current <= key then
-          if not key or current < key then list = {} end
-          table.insert(list,i)
-          key = current
-        end
-      end
-    end
-    return list
-  end
-  -- initialize data with first line over all files, and count chunks for
-  -- verbose output
-  local current_pos = {}
-  local total_size = 0
-  for i=1,#filenames do
-    local pos,size = take_next(i)
-    if not pos then pos,size = 0,0 end
-    current_pos[i] = pos
-    total_size = total_size + size
-  end
-  --
-  assert(not result_ns:match("^/tmp/"))
-  --
-  local red_job_files = {}
-  local red_result_files = {}
-  -- merge all the files until finished
-  local counter = 0
-  while not finished() do
-    counter = counter + 1
-    --
-    local mins_list = search_min()
-    assert(#mins_list > 0)
-    local key = data[mins_list[1]][1]
-    local part_key = assert(tonumber(part_func(key)),
-                            "Partition key must be a number")
-    assert(math.floor(part_key) == part_key,
-           "Partition key must be an integer")
-    if #mins_list == 1 then
-      if #data[mins_list[1]][2] == 1 then
-        -- put data in results file when not reduce is necessary
-        red_result_files[part_key] = red_result_files[part_key] or
-          cnn:grid_file_builder()
-        red_result_files[part_key]:append(string.format("return %s,%s\n",
-                                                        escape(data[mins_list[1]][1]),
-                                                        escape(data[mins_list[1]][2][1])))
-      else
-        -- put data in job file when reduce is necessary
-        red_job_files[part_key] = red_job_files[part_key] or
-          cnn:grid_file_builder()
-        red_job_files[part_key]:append(data[mins_list[1]][3])
-        red_job_files[part_key]:append("\n")
-      end
-      local pos = take_next(mins_list[1])
-      if pos then current_pos[mins_list[1]] = pos end
-    else
-      local key_str = escape(data[mins_list[1]][1])
-      local result = {}
-      for _,which in ipairs(mins_list) do
-        for _,v in ipairs(data[which][2]) do
-          table.insert(result, v)
-        end
-        local pos = take_next(which)
-        if pos then current_pos[which] = pos end
-      end
-      local value_str = serialize_table_ipairs(result)
-      red_job_files[part_key] = red_job_files[part_key] or
-        cnn:grid_file_builder()
-      red_job_files[part_key]:append(string.format("return %s,%s\n",
-                                                   key_str,value_str))
-    end
-    -- verbose output
-    if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
-      local pos = 0
-      for i=1,#filenames do pos = pos + current_pos[i] end
-      pos = math.min(pos,total_size)
-      io.stderr:write(string.format("\r\t\t %6.1f %% ",
-                                    pos/total_size*100))
-      io.stderr:flush()
-      collectgarbage("collect")
-    end
-  end
-  io.stderr:write(string.format("\r\t\t %6.1f %% \n", 100))
-  io.stderr:flush()
-  -- close all the files and upload them to mongo gridfs
-  for part_key,f in pairs(red_job_files) do
-    local gridfs_name = string.format("%s.K%d",red_job_tmp_dir,part_key)
-    gridfs:remove_file(gridfs_name)
-    f:build(gridfs_name)
-    -- remove crashed results
-    local gridfs_name = string.format("%s.K%d",result_ns,part_key)
-    gridfs:remove_file(gridfs_name)
-  end
-  for part_key,f in pairs(red_result_files) do
-    local gridfs_name = string.format("%s.K%d",result_ns,part_key)
-    gridfs:remove_file(gridfs_name)
-    f:build(gridfs_name)
-  end
-  -- remove all map result gridfs files
-  -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
+  return make_task_coroutine_wrap(self, map_jobs_ns),count
 end
 
 -- insert the job in the mongo db and returns a coroutine
@@ -227,52 +79,35 @@ local function server_prepare_reduce(self)
   local db     = self.cnn:connect()
   local gridfs = self.cnn:gridfs()
   local dbname = self.cnn:get_dbname()
+  local map_results_ns = self.task:get_map_results_ns()
   local red_jobs_ns = self.task:get_red_jobs_ns()
   remove_pending_tasks(db, red_jobs_ns)
-  -- take all filenames which match with the grp_tmp_dir in gridfs (all map
-  -- results are there)
+  -- list the filenames generated by mappers in order to create the reduce jobs
+  local match_str = string.format("^%s.*P.*M.*$",grp_tmp_dir)
   local filenames = {}
-  local list = gridfs:list()
+  local list = gridfs:list({ filename = { ["$regex"] = match_str } })
+  local part_keys = {}
   for obj in list:results() do
     local filename = obj.filename
-    if filename:match(string.format("^%s",grp_tmp_dir)) then
-      table.insert(filenames, filename)
-    end
+    -- sanity check
+    assert(filename:match(match_str))
+    -- create reduce jobs in mongo database, from partitioned space
+    local part_key = assert(tonumber(filename:match("^.*.P([^%.]+)%.M[^%.]*$")))
+    part_keys[part_key] = true
   end
-  -- if #filenames == 0 all data has been processed, avoid merge
-  if #filenames > 0 then
-    -- FIXME: check that #filenames == number of map jobs
-    
-    -- group map results depending in the partition function
-    io.stderr:write("# \t\t Merge and partitioning\n")
-    merge_gridfs_files(self.cnn, db, gridfs,
-                       filenames, self.partitionfn.func,
-                       self.result_ns)
-    collectgarbage("collect")
-  end
-  io.stderr:write("# \t\t Creating jobs\n")
-  -- create reduce jobs in mongo database, from partitioned space
-  local keys_check = {}
-  local list = gridfs:list()
-  for v in list:results() do
-    if v.filename:match(string.format("^%s",red_job_tmp_dir)) then
-      local part_key = assert(tonumber(v.filename:match("^.*.K(%d+)$")))
-      assert(not keys_check[part_key],
-             string.format("Duplicate key: %s, file: %s",
-                           part_key, v.filename))
-      keys_check[part_key] = true
-      local value = {
-        file   = v.filename,
-        result = string.format("%s.K%d",self.result_ns,part_key),
-      }
-      self.cnn:annotate_insert(red_jobs_ns, make_job(part_key, value))
-    end
+  local count=0
+  for part_key,_ in pairs(part_keys) do
+    count = count + 1
+    local value = {
+      file   = string.format("%s/%s.P%d", grp_tmp_dir, map_results_ns, part_key),
+      result = string.format("%s.P%d", self.result_ns, part_key),
+    }
+    self.cnn:annotate_insert(red_jobs_ns, make_job(part_key, value))
   end
   self.cnn:flush_pending_inserts(0)
-  self.task:set_task_status(TASK_STATUS.REDUCE,
-                            { last_chunk = max_chunk_value })
+  self.task:set_task_status(TASK_STATUS.REDUCE)
   -- this coroutine WAITS UNTIL ALL REDUCES ARE DONE
-  return make_task_coroutine_wrap(self, red_jobs_ns)
+  return make_task_coroutine_wrap(self, red_jobs_ns),count
 end
 
 local function server_drop_collections(self)
@@ -295,7 +130,7 @@ local function server_final(self)
   -- necessary to escape them
   local match_str = string.format("^%s",self.result_ns)
   local gridfs = self.cnn:gridfs()
-  local files = gridfs:list()
+  local files = gridfs:list({ filename = { ["$regex"] = match_str } })
   local current_file
   local lines_iterator
   -- iterator which is given to final function, allows to traverse all the
@@ -308,7 +143,8 @@ local function server_final(self)
       end
       if not line then
         current_file = files:next()
-        if current_file and current_file.filename:match(match_str) then
+        if current_file then
+          assert(current_file.filename:match(match_str))
           lines_iterator = gridfs_lines_iterator(gridfs,current_file.filename)
         end
       end
@@ -340,7 +176,7 @@ local function server_final(self)
   local list = gridfs:list()
   for v in list:results() do
     if not v.filename:match(match_str) or remove_all then
-      gridfs:remove_file(v.filename)
+      -- gridfs:remove_file(v.filename)
     end
   end
 end
@@ -350,15 +186,14 @@ local server_methods = {}
 
 -- configures the server with the script string
 function server_methods:configure(params)
-  self.configured = true
+  self.configured           = true
   self.configuration_params = params
-  self.task_args = params.task_args
-  self.map_args = params.map_args
-  self.partition_args = params.partition_args
-  self.reduce_args = params.reduce_args
-  self.final_args = params.final_args
+  self.task_args            = params.task_args
+  self.map_args             = params.map_args
+  self.reduce_args          = params.reduce_args
+  self.final_args           = params.final_args
   local dbname = self.dbname
-  local taskfn,mapfn,partitionfn,reducefn,finalfn
+  local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
   self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
@@ -380,14 +215,12 @@ function server_methods:configure(params)
   end
   local db = self.cnn:connect()
   --
-  self.partitionfn = require(scripts.partitionfn)
   self.taskfn = require(scripts.taskfn)
   if scripts.finalfn then
     self.finalfn = require(scripts.finalfn)
   else
     self.finalfn = { func = function() end }
   end
-  if self.partitionfn.init then self.partitionfn.init(self.partition_args) end
   if self.taskfn.init then self.taskfn.init(self.task_args) end
   if self.finalfn.init then self.finalfn.init(self.final_args) end
   self.mapfn = params.mapfn
@@ -439,20 +272,26 @@ function server_methods:loop()
     if not skip_map then
       -- MAP EXECUTION
       io.stderr:write("# \t Preparing MAP\n")
-      local do_map_step = server_prepare_map(self)
+      local do_map_step,map_count = server_prepare_map(self)
       collectgarbage("collect")
-      io.stderr:write("# \t MAP execution\n")
+      io.stderr:write(string.format("# \t MAP execution, size= %d\n",
+                                    map_count))
       while do_map_step() do
         utils.sleep(utils.DEFAULT_SLEEP)
         collectgarbage("collect")
       end
     end
+    local db = self.cnn:connect()
+    local map_count = db:count(self.task:get_map_jobs_ns())
     -- REDUCE EXECUTION
     collectgarbage("collect")
     io.stderr:write("# \t Preparing REDUCE\n")
     local do_reduce_step = server_prepare_reduce(self)
+    local db = self.cnn:connect()
+    local red_count = db:count(self.task:get_red_jobs_ns())
     collectgarbage("collect")
-    io.stderr:write("# \t REDUCE execution\n")
+    io.stderr:write(string.format("# \t REDUCE execution, num_files= %d  size= %d\n",
+                                  red_count * map_count, red_count))
     while do_reduce_step() do
       utils.sleep(utils.DEFAULT_SLEEP)
       collectgarbage("collect")
