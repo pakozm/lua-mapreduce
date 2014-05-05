@@ -176,7 +176,7 @@ local function server_final(self)
   local list = gridfs:list()
   for v in list:results() do
     if not v.filename:match(match_str) or remove_all then
-      -- gridfs:remove_file(v.filename)
+      gridfs:remove_file(v.filename)
     end
   end
 end
@@ -296,13 +296,14 @@ function server_methods:loop()
       utils.sleep(utils.DEFAULT_SLEEP)
       collectgarbage("collect")
     end
+    -- TIME
+    local end_time = os.time()
+    local total_time = end_time - time
+    self.task:insert_finished_time(end_time)
     -- FINAL EXECUTION
     io.stderr:write("# \t FINAL execution\n")
     collectgarbage("collect")
     server_final(self)
-    local end_time = os.time()
-    local total_time = end_time - time
-    self.task:insert_finished_time(end_time)
     --
     io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
   until self.finished
