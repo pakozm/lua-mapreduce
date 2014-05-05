@@ -67,10 +67,10 @@ $ ./execute_example_server.sh > output
 # MAP execution
  100.0 % 
 # Preparing REDUCE
-# 	 MERGE AND PARTITIONING
-	 100.0 % 
-# 	 CREATING JOBS
-# 	 STARTING REDUCE
+#    MERGE AND PARTITIONING
+     100.0 % 
+#    CREATING JOBS
+#    STARTING REDUCE
 # REDUCE execution
  100.0 % 
 # FINAL execution
@@ -80,18 +80,18 @@ $ ./execute_example_server.sh > output
 ```
 $ ./execute_example_worker.sh 
 # NEW TASK READY
-# 	 EXECUTING MAP JOB _id: "1"
-# 		 FINISHED
-# 	 EXECUTING MAP JOB _id: "2"
-# 		 FINISHED
-# 	 EXECUTING MAP JOB _id: "3"
-# 		 FINISHED
-# 	 EXECUTING MAP JOB _id: "4"
-# 		 FINISHED
-# 	 EXECUTING REDUCE JOB _id: "121"
-# 		 FINISHED
-# 	 EXECUTING REDUCE JOB _id: "37"
-# 		 FINISHED
+#    EXECUTING MAP JOB _id: "1"
+#        FINISHED
+#    EXECUTING MAP JOB _id: "2"
+#        FINISHED
+#    EXECUTING MAP JOB _id: "3"
+#        FINISHED
+#    EXECUTING MAP JOB _id: "4"
+#        FINISHED
+#    EXECUTING REDUCE JOB _id: "121"
+#        FINISHED
+#    EXECUTING REDUCE JOB _id: "37"
+#        FINISHED
 ...
 ```
 
@@ -247,14 +247,14 @@ A naive word-count version implemented in Lua takes:
 ```
 $ time cat /home/experimentos/CORPORA/EUROPARL/en-splits/* | \
   lua naive.lua > output-naivetime
-real    0m17.604s
-user    0m17.064s
-sys     0m1.445s
+real    0m26.125s
+user    0m17.458s
+sys     0m0.324s
 ```
 
 Looking to these numbers, it is clear that the better is to work in
 main memory, as in the naive Lua implementation, which needs only
-18 seconds. The map-reduce approach takes 70 seconds with four
+26 seconds. The map-reduce approach takes 70 seconds with four
 workers and 117 seconds with only one worker. These last two numbers
 are comparable with the naive shellscript implementation using pipes,
 which takes 141 seconds. Concluding, the preliminar lua-mapreduce
