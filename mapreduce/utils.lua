@@ -1,5 +1,7 @@
 local mongo = require "mongo"
 
+assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
+
 local utils = {
   _VERSION = "0.1",
   _NAME = "mapreduce.utils",
@@ -223,16 +225,8 @@ local function merge_iterator(gridfs, filenames)
     end
     return list
   end
-  -- initialize data with first line over all files, and count chunks for
-  -- verbose output
-  local current_pos = {}
-  local total_size = 0
-  for i=1,#filenames do
-    local pos,size = take_next(i)
-    if not pos then pos,size = 0,0 end
-    current_pos[i] = pos
-    total_size = total_size + size
-  end
+  -- initialize data with first line over all files
+  for i=1,#filenames do take_next(i) end
   local counter = 0
   -- the following closure is the iterator
   return function()
@@ -247,8 +241,7 @@ local function merge_iterator(gridfs, filenames)
       if #mins_list == 1 then
         -- only one secuence of values, nothing to merge
         result = data[mins_list[1]][2]
-        local pos = take_next(mins_list[1])
-        if pos then current_pos[mins_list[1]] = pos end
+        take_next(mins_list[1])
       else -- if #mins_list == 1 then ... else
         result = {}
         for i=1,#mins_list do
@@ -257,26 +250,17 @@ local function merge_iterator(gridfs, filenames)
           assert(data[which][1] == key)
           local v = data[which][2]
           for j=1,#v do table.insert(result, v[j]) end
-          local pos = take_next(which)
-          if pos then current_pos[which] = pos end
+          take_next(which)
         end
       end -- if #mins_list == 1 then ... else ... end
       -- verbose output
       if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
-        local pos = 0
-        for i=1,#filenames do pos = pos + current_pos[i] end
-        pos = math.min(pos,total_size)
-        io.stderr:write(string.format("\r\t\t %6.1f %% ",
-                                      pos/total_size*100))
-        io.stderr:flush()
         collectgarbage("collect")
       end
       return key,result
     end -- while not finished()
-    io.stderr:write(string.format("\r\t\t %6.1f %% \n", 100))
-    io.stderr:flush()
     -- remove all map result gridfs files
-    for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
+    -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
   end -- return function
 end
 

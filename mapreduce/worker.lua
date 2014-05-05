@@ -13,6 +13,7 @@ local cnn    = require "mapreduce.cnn"
 local worker_methods = {}
 
 function worker_methods:execute()
+  print(utils.get_hostname())
   local task       = self.task
   local iter       = 0
   local ITER_SLEEP = utils.DEFAULT_SLEEP
