@@ -429,6 +429,9 @@ function server_methods:loop()
                                   self.configuration_params, it)
     else
       it = self.task:get_iteration()
+      self.task:create_collection(self.task:get_task_status(),
+                                  self.configuration_params,
+                                  it)
     end
     io.stderr:write(string.format("# Iteration %d\n", it))
     local time = os.time()

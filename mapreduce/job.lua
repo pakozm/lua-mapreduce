@@ -9,6 +9,7 @@ local STATUS = utils.STATUS
 local grp_tmp_dir = utils.GRP_TMP_DIR
 local serialize_sorted_by_lines = utils.serialize_sorted_by_lines
 local gridfs_lines_iterator = utils.gridfs_lines_iterator
+local keys_sorted = utils.keys_sorted
 
 -- PRIVATE FUNCTIONS AND METHODS
 
@@ -71,6 +72,91 @@ function job_mark_as_written(self)
                     false) )
 end
 
+function job_prepare_map(self, g,
+                         combiner_fname, combiner_args,
+                         paritioner)
+  local map_key,map_value = self:get_pair()
+  -- this closure is the responsible for all the map job
+  return function()
+    g(map_key,map_value) -- executes the MAP function, the result is
+    -- self.result the job is marked as finished, but not written
+    job_mark_as_finished(self)
+    --
+    local results_ns = self.results_ns
+    -- combiner, apply the reduce function before put result to database
+    local combiner =  job_get_func(self, combiner_fname,
+                                   combiner_args)
+    -- partition of the map result using partition function; additionally, the
+    -- data is stored sorted by key; data is appended to GridFileBuilders
+    local result     = self.result or {}
+    local db         = self.cnn:connect()
+    local gridfs     = self.cnn:gridfs()
+    local keys       = keys_sorted(result)
+    local builders = {}
+    for _,key in ipairs(keys) do
+      local value     = result[key]
+      local value     = ( (#value > 1) and { combiner(value) } ) or value
+      local part_key  = partitioner(key)
+      local part_key  = assert(tonumber(part_key),
+                               "Partition key must be a number")
+      assert(math.floor(part_key) == part_key,
+             "Partition key must be an integer")
+      local result_ns = string.format("%s.P%d.M%s", self.results_ns,
+                                      part_key, map_key)
+      local builder   = builders[result_ns] or self.cnn:grid_file_builder()
+      local key_str   = escape(key)
+      local value_str = serialize_table_ipairs(result[key])
+      builder:append(string.format("return %s,%s\n", key_str, value_str))
+    end
+    -- create all the GridFS files
+    for result_ns,builder in pairs(builders) do
+      local gridfs_filename = string.format("%s/%s",grp_tmp_dir,results_ns)
+      gridfs:remove_file(gridfs_filename)
+      builder:build(gridfs_filename)
+    end
+    -- job is marked as written to the database
+    job_mark_as_written(self)
+  end
+end
+
+function job_prepare_reduce(self, g)
+  local key,value = self:get_pair()
+  return function()
+    -- in reduce jobs, the value is a reference with the basename of the gridfs
+    -- filenames related to the given reduce job
+    local part_key = key
+    local job_file = value.file
+    local res_file = value.result
+    local gridfs   = obj.cnn:gridfs()
+    local builder  = obj.cnn:grid_file_builder()
+    gridfs:remove_file(res_file)
+    -- take all the files which match the given job_file name
+    local filenames = {}
+    local match_str = string.format("^%s", job_file)
+    local list = gridfs:list({ filename = match_str })
+    for _,v in list:results() do
+      -- sanity check
+      assert(v.filename:match(match_str))
+      table.insert(filenames, v.filename)
+    end
+    local counter = 0
+    for k,v in merge_iterator(gridfs, filenames) do
+      counter = counter + 1
+      local v = g(k,v) -- executes the REDUCE function
+      assert(v, "Reduce must return a value")
+      builder:append(string.format("return %s,%s\n",
+                                   utils.escape(k), utils.escape(v)))
+      if counter % utils.MAX_IT_WO_CGARBAGE then
+        collectgarbage("collect")
+      end
+    end
+    builder:build(res_file)
+    -- job is marked as as written directly
+    job_mark_as_written(obj)
+  end
+end
+end
+
 -- PUBLIC METHODS
 
 function job:execute()
@@ -108,67 +194,13 @@ function job:__call(cnn, job_tbl, task_status, fname, args, jobs_ns, results_ns,
   --
   local fn,g
   if not not_executable then g = job_get_func(obj, fname, args) end
-  local key,value = obj:get_pair()
-  if task_status == "MAP" then
-    obj.results_ns = obj.results_ns .. ".K" .. key
-    if not not_executable then
-      fn = function()
-        g(key,value) -- executes the MAP function, the result is obj.result
-        -- the job is marked as finished, but not written
-        job_mark_as_finished(obj)
-        --
-        local results_ns = obj.results_ns
-        -- combiner, apply the reduce function before put result to database
-        local combiner = (combiner_fname and job_get_func(obj, combiner_fname,
-                                                          combiner_args))
-        -- aggregates all the map job in a gridfs file, using the combiner
-        local result     = obj.result or {}
-        local db         = obj.cnn:connect()
-        local gridfs     = obj.cnn:gridfs()
-        local gridfs_filename = string.format("%s/%s",grp_tmp_dir,results_ns)
-        gridfs:remove_file(gridfs_filename)
-        local builder=obj.cnn:grid_file_builder()
-        serialize_sorted_by_lines(builder,result,combiner)
-        builder:build(gridfs_filename)
-        -- job is marked as written to the database
-        job_mark_as_written(obj)
-      end
+  if not not_executable then
+    if task_status == "MAP" then
+      fn = job_prepare_map(self, g, not_executable, combiner_fname, combiner_args)
+    elseif task_status == "REDUCE" then
+      fn = job_prepare_reduce(self, g)
     end
-  elseif task_status == "REDUCE" then
-    if not not_executable then
-      fn = function()
-        -- in reduce jobs, the value is a reference to a gridfs filename
-        local part_key = key
-        local job_file = value.file
-        local res_file = value.result
-        local gridfs   = obj.cnn:gridfs()
-        local gridfile = gridfs:find_file(res_file)
-        local builder  = obj.cnn:grid_file_builder()
-        if gridfile then
-          for i=1,gridfile:num_chunks() do
-            builder:append(gridfile:chunk(i-1):data())
-          end
-        end
-        local counter = 0
-        for line in gridfs_lines_iterator(gridfs, job_file) do
-          counter = counter + 1
-          local k,v = load(line)()
-          local v = g(k,v) -- executes the REDUCE function
-          assert(v, "Reduce must return a value")
-          builder:append(string.format("return %s,%s\n",
-                                       utils.escape(k), utils.escape(v)))
-          if counter % utils.MAX_IT_WO_CGARBAGE then
-            collectgarbage("collect")
-          end
-        end
-        gridfs:remove_file(res_file)
-        builder:build(res_file)
-        -- job is marked as as written directly
-        job_mark_as_written(obj)
-      end
-    end
-  end
-  if not_executable then
+  else
     fn = function() error("Forbidden execution of jobs here") end
   end
   obj.fn = fn

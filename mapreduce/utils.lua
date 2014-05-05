@@ -94,21 +94,12 @@ local function serialize_table_ipairs(t)
   return string.format("{%s}",table.concat(result, ","))
 end
 
-local function serialize_sorted_by_lines(f,result,combiner)
+-- receives a dictionary and returns an array with the keys in order
+local function keys_sorted(result)
   local keys = {}
-  for k,v in pairs(result) do
-    table.insert(keys,k)
-    -- combine as soon as possible allows reduction of intermediate file sizes
-    if combiner and #v > 1 then
-      result[k] = { assert(combiner(k,v)) }
-    end
-  end
+  for k,v in pairs(result) do table.insert(keys,k) end
   table.sort(keys)
-  for _,key in ipairs(keys) do
-    local key_str = escape(key)
-    local value_str = serialize_table_ipairs(result[key])
-    f:append(string.format("return %s,%s\n", key_str, value_str))
-  end
+  return keys
 end
 
 -- iterates over all the lines of a given gridfs filename, and returns the first
@@ -180,6 +171,115 @@ local function gridfs_lines_iterator(gridfs, filename)
   end -- return function()
 end
 
+-- receives a gridfs object and an array of filenames (remote filenames) and
+-- performs a merge operation over all its lines; the files content is expected
+-- to be something like "return k,v" in every line, so them could be loaded as
+-- Lua strings
+local function merge_iterator(gridfs, filenames)
+    -- initializes all the line iterators (one for each file)
+  local line_iterators = {}
+  for _,name in ipairs(filenames) do
+    table.insert(line_iterators, gridfs_lines_iterator(gridfs,name))
+  end
+  local finished = false
+  local data = {}
+  -- take the next data of a given file number
+  local take_next = function(which)
+    if line_iterators[which] then
+      local line,_,_,_,_,pos,size = line_iterators[which]()
+      if line then
+        data[which] = data[which] or {}
+        data[which][3],data[which][1],data[which][2] = line,load(line)()
+        return pos,size
+      else
+        data[which] = nil
+        line_iterators[which] = nil
+      end
+    else
+      data[which] = nil
+    end
+  end
+  -- we finished when all the data is nil
+  local finished = function()
+    local ret = true
+    for i=1,#filenames do
+      if data[i] ~= nil then ret = false break end
+    end
+    return ret
+  end
+  -- look for all the data which has the min key
+  local search_min = function()
+    local key
+    local list = {}
+    for i=1,#filenames do
+      if data[i] then
+        local current = data[i][1]
+        if not key or current <= key then
+          if not key or current < key then list = {} end
+          table.insert(list,i)
+          key = current
+        end
+      end
+    end
+    return list
+  end
+  -- initialize data with first line over all files, and count chunks for
+  -- verbose output
+  local current_pos = {}
+  local total_size = 0
+  for i=1,#filenames do
+    local pos,size = take_next(i)
+    if not pos then pos,size = 0,0 end
+    current_pos[i] = pos
+    total_size = total_size + size
+  end
+  local counter = 0
+  -- the following closure is the iterator
+  return function()
+    -- merge all the files until finished
+    while not finished() do
+      counter = counter + 1
+      --
+      local mins_list = search_min()
+      assert(#mins_list > 0)
+      local key = data[mins_list[1]][1]
+      local result
+      if #mins_list == 1 then
+        -- only one secuence of values, nothing to merge
+        result = data[mins_list[1]][2]
+        local pos = take_next(mins_list[1])
+        if pos then current_pos[mins_list[1]] = pos end
+      else -- if #mins_list == 1 then ... else
+        result = {}
+        for i=1,#mins_list do
+          local which = mins_list[i]
+          -- sanity check
+          assert(data[which][1] == key)
+          local v = data[which][2]
+          for j=1,#v do table.insert(result, v[j]) end
+        end
+        local pos = take_next(which)
+        if pos then current_pos[which] = pos end
+      end -- if #mins_list == 1 then ... else ... end
+      -- verbose output
+      if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
+        local pos = 0
+        for i=1,#filenames do pos = pos + current_pos[i] end
+        pos = math.min(pos,total_size)
+        io.stderr:write(string.format("\r\t\t %6.1f %% ",
+                                      pos/total_size*100))
+        io.stderr:flush()
+        collectgarbage("collect")
+      end
+      return key,values
+    end -- while not finished()
+    io.stderr:write(string.format("\r\t\t %6.1f %% \n", 100))
+    io.stderr:flush()
+    -- remove all map result gridfs files
+    for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
+  end -- return function
+end
+
 --------------------------------------------------------------------------------
 
 utils.iscallable = iscallable
@@ -193,7 +293,7 @@ utils.make_job = make_job
 utils.connect = connect
 utils.escape = escape
 utils.serialize_table_ipairs = serialize_table_ipairs
-utils.serialize_sorted_by_lines = serialize_sorted_by_lines
 utils.gridfs_lines_iterator = gridfs_lines_iterator
+utils.keys_sorted = keys_sorted
 
 return utils
