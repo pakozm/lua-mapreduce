@@ -33,9 +33,8 @@ local function normalize(name)
   return name:gsub("/","."):gsub("%.lua$","")
 end
 --
-local server = require "mapreduce.server"
-local utils = require "mapreduce.utils"
-local s = server.new(connection_string, dbname)
+local mapreduce = require "mapreduce"
+local s = mapreduce.server.new(connection_string, dbname)
 s:configure{
   taskfn         = normalize(taskfn),
   mapfn          = normalize(mapfn),
@@ -49,5 +48,5 @@ s:configure{
   final_args     = arg,
   result_ns      = result_ns,
 }
-utils.sleep(4)
+mapreduce.utils.sleep(4)
 s:loop()

@@ -3,6 +3,7 @@ local worker = {
   _NAME = "mapreduce.worker",
 }
 
+local job    = require "mapreduce.job"
 local utils  = require "mapreduce.utils"
 local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
@@ -13,6 +14,7 @@ local cnn    = require "mapreduce.cnn"
 local worker_methods = {}
 
 function worker_methods:execute()
+  print(" # HOSTNAME ", utils.get_hostname())
   local task       = self.task
   local iter       = 0
   local ITER_SLEEP = utils.DEFAULT_SLEEP
@@ -31,14 +33,17 @@ function worker_methods:execute()
       local task_status,job = task:take_next_job(self.tmpname)
       if job then
         if not job_done then
-          print("# NEW TASK READY")
+          print("# New TASK ready")
         end
-        print(string.format("# \t EXECUTING %s JOB _id: %q",
+        print(string.format("# \t Executing %s job _id: %q",
                             task_status, job:status_string()))
-        job:execute() -- MAP or REDUCE
-        print("# \t\t FINISHED")
+        local t1 = os.time()
+        local elapsed_time = job:execute() -- MAP or REDUCE
+        print(string.format("# \t\t Finished: %f elapsed user time, %d real time",
+                            elapsed_time, os.time() - t1))
         job_done = true
       else -- if dbname then ... else
+        print("# \t Running, waiting for new jobs...")
         collectgarbage("collect")
         self.cnn:flush_pending_inserts(0)
         utils.sleep(utils.DEFAULT_SLEEP)
@@ -46,11 +51,12 @@ function worker_methods:execute()
     until task:finished() -- repeat
     self.cnn:flush_pending_inserts()
     if job_done then
-      print("# TASK DONE")
+      print("# TASK done")
       iter       = 0
       ITER_SLEEP = utils.DEFAULT_SLEEP
       ntasks     = ntasks + 1
       job_done   = false
+      job.reset_cache()
     end
     if ntasks < MAX_TASKS then
       print(string.format("# WAITING...\tntasks: %d/%d\tit: %d/%d\tsleep: %.1f",

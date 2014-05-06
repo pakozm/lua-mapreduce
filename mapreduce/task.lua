@@ -33,16 +33,21 @@ end
 
 -- PUBLIC METHODS
 
-function task:create_collection(task_status, params)
+function task:create_collection(task_status, params, iteration)
   local db = self.cnn:connect()
   assert( db:update(self.ns, { _id = "unique" },
                     { ["$set"] = {
-                        status      = task_status,
+                        status         = task_status,
                         --
-                        mapfn       = params.mapfn,
-                        reducefn    = params.reducefn,
-                        map_args    = params.map_args,
-                        reduce_args = params.reduce_args,
+                        mapfn          = params.mapfn,
+                        reducefn       = params.reducefn,
+                        map_args       = params.map_args,
+                        reduce_args    = params.reduce_args,
+                        partitionfn    = params.partitionfn,
+                        partition_args = params.partition_args,
+                        iteration      = iteration,
+                        started_time   = 0,
+                        finished_time  = 0,
                     }, },
                     true, false) )
 end
@@ -89,6 +94,14 @@ function task:get_task_status()
   else
     return TASK_STATUS.FINISHED
   end
+end
+
+function task:has_status()
+  return self.tbl ~= nil
+end
+
+function task:get_iteration()
+  return self.tbl.iteration
 end
 
 function task:set_task_status(status, extra)
@@ -148,6 +161,14 @@ function task:get_reduce_args()
   return self.tbl.reduce_args
 end
 
+function task:get_partition_fname()
+  return self.tbl.partitionfn
+end
+
+function task:get_partition_args()
+  return self.tbl.partition_args
+end
+
 -- JOB INTERFACE
 
 -- workers use this method to load a new job in the caller object
@@ -171,10 +192,10 @@ function task:take_next_job(tmpname)
     },
   }
   local set_query = {
-    worker = utils.get_hostname(),
-    tmpname = tmpname_summary(tmpname),
+    worker       = utils.get_hostname(),
+    tmpname      = tmpname_summary(tmpname),
     started_time = t,
-    status = STATUS.RUNNING,
+    status       = STATUS.RUNNING,
   }
   -- FIXME: check the write concern
   assert( db:update(jobs_ns, query,
@@ -191,7 +212,9 @@ function task:take_next_job(tmpname)
                            self:get_fname(), self:get_args(),
                            jobs_ns, results_ns,
                            nil, -- not_executable = false
-                           self:get_reduce_fname(), self:get_reduce_args())
+                           self:get_reduce_fname(), self:get_reduce_args(),
+                           self:get_partition_fname(),
+                           self:get_partition_args())
     
   else -- if self.one_job then ...
     -- the job (if taken) will be freed, making it available to other worker
@@ -215,9 +238,9 @@ function task:__call(cnn)
     cnn = cnn,
     ns = dbname .. ".task",
     map_jobs_ns    = dbname .. ".map_jobs",
-    map_results_ns = dbname .. ".map_results",
+    map_results_ns = "map_results",
     red_jobs_ns    = dbname .. ".red_jobs",
-    red_results_ns = dbname .. ".red_results",
+    red_results_ns = "red_results",
   }
   setmetatable(obj, { __index=self })
   --
