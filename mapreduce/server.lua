@@ -21,6 +21,36 @@ local gridfs_lines_iterator = utils.gridfs_lines_iterator
 
 -- PRIVATE FUNCTIONS AND METHODS
 
+local function compute_real_time(db, ns)
+  local result_min = db:mapreduce(ns, [[
+function() { emit(0, this.started_time) } ]],
+               [[
+function(k,v) {
+  var min=v[0];
+  for (var i=1; i<v.length; ++i)
+  if (v[i]<min) min=v[i];
+  return min;
+}]])
+  local result_max = db:mapreduce(ns, [[
+function() { emit(0, this.written_time) } ]],
+               [[
+function(k,v) {
+  var max=v[0];
+  for (var i=1; i<v.length; ++i)
+  if (v[i]>max) max=v[i];
+  return max;
+}]])
+  return result_max.results[1].value - result_min.results[1].value
+end
+
+local function compute_cpu_time(db, ns)
+  local result = db:mapreduce(ns, [[
+function() { emit(0, this.cpu_time) } ]],
+                                  [[
+function(k,v) { return Array.sum(v); }]])
+  return result.results[1].value
+end
+
 -- returns a coroutine.wrap which returns true until all tasks are finished
 local function make_task_coroutine_wrap(self,ns)
   local db = self.cnn:connect()
@@ -271,10 +301,10 @@ function server_methods:loop()
     self.task:insert_started_time(time)
     if not skip_map then
       -- MAP EXECUTION
-      io.stderr:write("# \t Preparing MAP\n")
+      io.stderr:write("# \t Preparing Map\n")
       local do_map_step,map_count = server_prepare_map(self)
       collectgarbage("collect")
-      io.stderr:write(string.format("# \t MAP execution, size= %d\n",
+      io.stderr:write(string.format("# \t Map execution, size= %d\n",
                                     map_count))
       while do_map_step() do
         utils.sleep(utils.DEFAULT_SLEEP)
@@ -285,12 +315,12 @@ function server_methods:loop()
     local map_count = db:count(self.task:get_map_jobs_ns())
     -- REDUCE EXECUTION
     collectgarbage("collect")
-    io.stderr:write("# \t Preparing REDUCE\n")
+    io.stderr:write("# \t Preparing Reduce\n")
     local do_reduce_step = server_prepare_reduce(self)
     local db = self.cnn:connect()
     local red_count = db:count(self.task:get_red_jobs_ns())
     collectgarbage("collect")
-    io.stderr:write(string.format("# \t REDUCE execution, num_files= %d  size= %d\n",
+    io.stderr:write(string.format("# \t Reduce execution, num_files= %d  size= %d\n",
                                   red_count * map_count, red_count))
     while do_reduce_step() do
       utils.sleep(utils.DEFAULT_SLEEP)
@@ -301,11 +331,28 @@ function server_methods:loop()
     local total_time = end_time - time
     self.task:insert_finished_time(end_time)
     -- FINAL EXECUTION
-    io.stderr:write("# \t FINAL execution\n")
+    io.stderr:write("# \t Final execution\n")
     collectgarbage("collect")
     server_final(self)
     --
-    io.stderr:write("# " .. tostring(total_time) .. " seconds\n")
+    -- STATISTICS
+    local map_sum_cpu_time = compute_cpu_time(db, self.task:get_map_jobs_ns())
+    local red_sum_cpu_time = compute_cpu_time(db, self.task:get_red_jobs_ns())
+    local map_real_time    = compute_real_time(db, self.task:get_map_jobs_ns())
+    local red_real_time    = compute_real_time(db, self.task:get_red_jobs_ns())
+
+    io.stderr:write(string.format("#   Map sum(cpu_time)    %f\n",
+                                  map_sum_cpu_time))
+    io.stderr:write(string.format("#   Reduce sum(cpu_time) %f\n",
+                                  red_sum_cpu_time))
+    io.stderr:write(string.format("# Sum(cpu_time)          %f\n",
+                                  map_sum_cpu_time + red_sum_cpu_time))
+    io.stderr:write(string.format("#   Map real time    %d\n", map_real_time))
+    io.stderr:write(string.format("#   Reduce real time %d\n", red_real_time))
+    io.stderr:write(string.format("# Real time          %d\n",
+                                  map_real_time + red_real_time))
+    --
+    io.stderr:write(string.format("# Iteration time %d\n", total_time))
   until self.finished
 end
 

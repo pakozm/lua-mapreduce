@@ -27,6 +27,7 @@ local utils = {
   MAX_PENDING_INSERTS  = 50000,
   MAX_IT_WO_CGARBAGE   =  5000,
   MAX_TIME_WO_CGARBAGE =    60, -- 1 minute
+  MAX_MAP_RESULT       =  5000,
   GRP_TMP_DIR = "/tmp/grouped",
   RED_JOB_TMP_DIR = "/tmp/red_job",
 }
@@ -115,6 +116,7 @@ local function gridfs_lines_iterator(gridfs, filename)
   local abs_pos       = 0
   local num_chunks    = gridfile:num_chunks()
   local chunk,data
+  local tbl           = {}
   return function()
     -- capture the variables to avoid garbage collection, and to improve
     -- performance
@@ -127,7 +129,8 @@ local function gridfs_lines_iterator(gridfs, filename)
         local last_chunk  = current_chunk
         local first_chunk_pos = current_pos
         local last_chunk_pos = current_pos
-        local tbl = {}
+        -- faster than tbl = {}
+        for k,v in ipairs(tbl) do tbl[k] = nil end
         local found_line = false
         repeat
           chunk = chunk or gridfile:chunk(current_chunk)
@@ -135,13 +138,13 @@ local function gridfs_lines_iterator(gridfs, filename)
           local chunk_len = chunk:len()
           local match = data:match("^([^\n]*)\n", current_pos)
           if match then
-            table.insert(tbl, match)
+            tbl[ #tbl+1 ] =  match
             current_pos = #match + current_pos + 1 -- +1 because of the \n
             abs_pos     = #match + abs_pos + 1
             found_line = true
           else -- if match ... then
             -- inserts the whole chunk substring, no \n match found
-            table.insert(tbl, data:sub(current_pos, chunk_len))
+            tbl[ #tbl+1 ] = data:sub(current_pos, chunk_len)
             current_pos = chunk_len + 1 -- forces to go next chunk
             abs_pos     = abs_pos + #tbl[#tbl]
           end -- if match ... then else ...
@@ -155,7 +158,8 @@ local function gridfs_lines_iterator(gridfs, filename)
           end
           -- avoids to process empty lines
           if found_line and first_chunk==last_chunk and last_chunk_pos==first_chunk_pos then
-            tbl             = {}
+            -- faster than tbl = {}
+            for k,v in ipairs(tbl) do tbl[k] = v end
             found_line      = false
             first_chunk     = current_chunk
             last_chunk      = current_chunk
@@ -178,10 +182,10 @@ end
 -- to be something like "return k,v" in every line, so them could be loaded as
 -- Lua strings
 local function merge_iterator(gridfs, filenames)
-    -- initializes all the line iterators (one for each file)
+  -- initializes all the line iterators (one for each file)
   local line_iterators = {}
   for _,name in ipairs(filenames) do
-    table.insert(line_iterators, gridfs_lines_iterator(gridfs,name))
+    line_iterators[ #line_iterators+1 ] = gridfs_lines_iterator(gridfs,name)
   end
   local finished = false
   local data = {}
@@ -230,6 +234,11 @@ local function merge_iterator(gridfs, filenames)
   local counter = 0
   -- the following closure is the iterator
   return function()
+    local MAX_IT_WO_CGARBAGE = utils.MAX_IT_WO_CGARBAGE
+    local assert       = assert
+    local data         = data
+    local take_next    = take_next
+    local finished     = finished
     -- merge all the files until finished
     while not finished() do
       counter = counter + 1
@@ -249,12 +258,12 @@ local function merge_iterator(gridfs, filenames)
           -- sanity check
           assert(data[which][1] == key)
           local v = data[which][2]
-          for j=1,#v do table.insert(result, v[j]) end
+          for j=1,#v do result[ #result+1 ] = v[j] end
           take_next(which)
         end
       end -- if #mins_list == 1 then ... else ... end
       -- verbose output
-      if counter % utils.MAX_IT_WO_CGARBAGE == 0 then
+      if counter % MAX_IT_WO_CGARBAGE == 0 then
         collectgarbage("collect")
       end
       return key,result

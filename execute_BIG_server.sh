@@ -1,5 +1,5 @@
 #!/bin/bash
-LUA_PATH="?.lua"
+LUA_PATH="?.lua;?/init.lua"
 lua execute_server.lua django wordcountBIG \
     examples.WordCountBig.taskfn \
     examples.WordCount.mapfn \
