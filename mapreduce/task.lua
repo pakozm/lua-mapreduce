@@ -70,6 +70,13 @@ function task:insert_started_time(t)
                     false, false) )
 end
 
+function task:insert(t)
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { _id = "unique" },
+                    { ["$set"] = t },
+                    false, false) )
+end
+
 function task:update()
   local db = self.cnn:connect()
   local tbl = db:find_one(self.ns, { _id = "unique" })

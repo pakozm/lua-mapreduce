@@ -352,6 +352,16 @@ function server_methods:loop()
     io.stderr:write(string.format("# Real time          %d\n",
                                   map_real_time + red_real_time))
     --
+    self.task:insert{
+      map_sum_cpu_time = map_sum_cpu_time,
+      red_sum_cpu_time = red_sum_cpu_time,
+      total_sum_cpu_time = map_sum_cpu_time + red_sum_cpu_time,
+      map_real_time = map_real_time,
+      red_real_time = red_real_time,
+      total_real_time = map_real_time + red_real_time,
+      iteration_time = total_time,
+    }
+    --
     io.stderr:write(string.format("# Iteration time %d\n", total_time))
   until self.finished
 end
