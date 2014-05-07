@@ -297,8 +297,8 @@ function server_methods:loop()
                                   it)
     end
     io.stderr:write(string.format("# Iteration %d\n", it))
-    local time = os.time()
-    self.task:insert_started_time(time)
+    local start_time = os.time()
+    self.task:insert_started_time(start_time)
     if not skip_map then
       -- MAP EXECUTION
       io.stderr:write("# \t Preparing Map\n")
@@ -328,7 +328,7 @@ function server_methods:loop()
     end
     -- TIME
     local end_time = os.time()
-    local total_time = end_time - time
+    local total_time = end_time - start_time
     self.task:insert_finished_time(end_time)
     -- FINAL EXECUTION
     io.stderr:write("# \t Final execution\n")
