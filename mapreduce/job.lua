@@ -100,6 +100,7 @@ function job_mark_as_written(self,cpu_time)
                         status = STATUS.WRITTEN,
                         written_time = os.time(),
                         cpu_time = cpu_time,
+                        real_time = os.time() - self.t,
                       },
                     },
                     false,
@@ -250,6 +251,7 @@ function job:__call(cnn, job_tbl, task_status,
     job_tbl = job_tbl,
     jobs_ns = jobs_ns,
     results_ns = results_ns,
+    t = os.time(),
   }
   setmetatable(obj, { __index=self })
   --

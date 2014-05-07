@@ -22,25 +22,11 @@ local gridfs_lines_iterator = utils.gridfs_lines_iterator
 -- PRIVATE FUNCTIONS AND METHODS
 
 local function compute_real_time(db, ns)
-  local result_min = db:mapreduce(ns, [[
-function() { emit(0, this.started_time) } ]],
-               [[
-function(k,v) {
-  var min=v[0];
-  for (var i=1; i<v.length; ++i)
-  if (v[i]<min) min=v[i];
-  return min;
-}]])
-  local result_max = db:mapreduce(ns, [[
-function() { emit(0, this.written_time) } ]],
-               [[
-function(k,v) {
-  var max=v[0];
-  for (var i=1; i<v.length; ++i)
-  if (v[i]>max) max=v[i];
-  return max;
-}]])
-  return result_max.results[1].value - result_min.results[1].value
+  local result = db:mapreduce(ns, [[
+function() { emit(0, this.real_time) } ]],
+                                  [[
+function(k,v) { return Array.sum(v); }]])
+  return result.results[1].value
 end
 
 local function compute_cpu_time(db, ns)
