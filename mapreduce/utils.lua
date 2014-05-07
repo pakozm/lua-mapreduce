@@ -63,8 +63,7 @@ local function check_mapreduce_result(res)
 end
 
 local function sleep(n)
-  -- print("SLEEP ",n)
-  os.execute("sleep " .. tonumber(n))
+  mongo.sleep(n)
 end
 
 -- makes a map/reduce job document
