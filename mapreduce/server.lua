@@ -235,6 +235,7 @@ function server_methods:configure(params)
   self.map_args             = params.map_args
   self.reduce_args          = params.reduce_args
   self.final_args           = params.final_args
+  self.sharded              = params.sharded
   local dbname = self.dbname
   local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
@@ -257,6 +258,7 @@ function server_methods:configure(params)
     scripts[name] = params[name]
   end
   local db = self.cnn:connect()
+  if self.sharded then self.cnn:set_sharded_gridfs() end
   --
   self.taskfn = require(scripts.taskfn)
   if scripts.finalfn then
@@ -273,6 +275,7 @@ end
 -- makes all the map-reduce process, looping into the coroutines until all tasks
 -- are done
 function server_methods:loop()
+  assert(self.configured, "Call to server:configure(...) method is mandatory")
   local it = 0
   repeat
     local skip_map,initialize=false,true

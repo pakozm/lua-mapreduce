@@ -29,6 +29,19 @@ function cnn:get_dbname()
   return self.dbname
 end
 
+function cnn:set_sharded_gridfs()
+  local db = self:connect()
+  local gridfs = self:gridfs()
+  -- FIXME: it doesn't work
+  assert( db:run_command("admin",
+                         { enableSharding=self.gridfs_dbname }) )
+  assert( db:run_command("admin",
+                         {
+                           shardCollection=self.gridfs_dbname .. ".fs.chunks",
+                           key={ files_id=1, n=1 }
+                         }) )
+end
+
 function cnn:annotate_insert(ns,tbl,callback)
   self.pending_inserts = self.pending_inserts or {}
   self.pending_callbacks = self.pending_callbacks or {}

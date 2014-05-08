@@ -45,6 +45,7 @@ function task:create_collection(task_status, params, iteration)
                         reduce_args    = params.reduce_args,
                         partitionfn    = params.partitionfn,
                         partition_args = params.partition_args,
+                        --
                         iteration      = iteration,
                         started_time   = 0,
                         finished_time  = 0,

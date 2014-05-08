@@ -40,7 +40,7 @@ local function connect(cnn_string, auth_table)
   local db = assert( mongo.Connection.New{ auto_reconnect=true,
                                            rw_timeout=utils.DEFAULT_RW_TIMEOUT} )
   assert( db:connect(cnn_string) )
-  if auth_table then db:auth(auth_table) end
+  if auth_table then assert( db:auth(auth_table), "Authtentication failure")  end
   assert( not db:is_failed(), "Impossible to connect :S" )
   return db
 end
