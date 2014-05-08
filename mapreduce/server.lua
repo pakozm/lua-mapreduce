@@ -21,32 +21,41 @@ local gridfs_lines_iterator = utils.gridfs_lines_iterator
 
 -- PRIVATE FUNCTIONS AND METHODS
 
+local function count_digits(n)
+  local c = 0
+  while n > 0 do
+    n = math.floor(n/10)
+    c = c + 1
+  end
+  return c
+end
+
 local function compute_real_time(db, ns)
-  local result_min = db:mapreduce(ns, [[
+  local out_min = db:mapreduce(ns, [[
 function() { emit(0, this.started_time) } ]],
                [[
 function(k,v) {
   var min=v[0];
   for (var i=1; i<v.length; ++i)
-  if (v[i]<min) min=v[i];
+    if (v[i]<min) min=v[i];
   return min;
 }]])
-  local result_max = db:mapreduce(ns, [[
+  local out_max = db:mapreduce(ns, [[
 function() { emit(0, this.written_time) } ]],
                [[
 function(k,v) {
   var max=v[0];
   for (var i=1; i<v.length; ++i)
-  if (v[i]>max) max=v[i];
+    if (v[i]>max) max=v[i];
   return max;
 }]])
-  return result_max.results[1].value - result_min.results[1].value
+  return out_max.results[1].value - out_min.results[1].value
 end
 
-local function compute_cpu_time(db, ns)
-  local result = db:mapreduce(ns, [[
-function() { emit(0, this.cpu_time) } ]],
-                                  [[
+local function compute_sum(db, ns, field)
+  local result = db:mapreduce(ns, string.format([[
+function() { emit(0, this.%s) } ]], field),
+                              [[
 function(k,v) { return Array.sum(v); }]])
   return result.results[1].value
 end
@@ -117,6 +126,7 @@ local function server_prepare_reduce(self)
   local filenames = {}
   local list = gridfs:list({ filename = { ["$regex"] = match_str } })
   local part_keys = {}
+  local max_part_key = 0
   for obj in list:results() do
     local filename = obj.filename
     -- sanity check
@@ -124,13 +134,16 @@ local function server_prepare_reduce(self)
     -- create reduce jobs in mongo database, from partitioned space
     local part_key = assert(tonumber(filename:match("^.*.P([^%.]+)%.M[^%.]*$")))
     part_keys[part_key] = true
+    max_part_key = math.max(max_part_key, part_key)
   end
+  local part_key_digits = count_digits(max_part_key)
+  local result_str_format = "%s.P%0" .. tostring(part_key_digits) .. "d"
   local count=0
   for part_key,_ in pairs(part_keys) do
     count = count + 1
     local value = {
       file   = string.format("%s/%s.P%d", grp_tmp_dir, map_results_ns, part_key),
-      result = string.format("%s.P%d", self.result_ns, part_key),
+      result = string.format(result_str_format, self.result_ns, part_key),
     }
     self.cnn:annotate_insert(red_jobs_ns, make_job(part_key, value))
   end
@@ -297,7 +310,7 @@ function server_methods:loop()
                                   it)
     end
     io.stderr:write(string.format("# Iteration %d\n", it))
-    local start_time = os.time()
+    local start_time = utils.time()
     self.task:insert_started_time(start_time)
     if not skip_map then
       -- MAP EXECUTION
@@ -327,7 +340,7 @@ function server_methods:loop()
       collectgarbage("collect")
     end
     -- TIME
-    local end_time = os.time()
+    local end_time = utils.time()
     local total_time = end_time - start_time
     self.task:insert_finished_time(end_time)
     -- FINAL EXECUTION
@@ -336,33 +349,55 @@ function server_methods:loop()
     server_final(self)
     --
     -- STATISTICS
-    local map_sum_cpu_time = compute_cpu_time(db, self.task:get_map_jobs_ns())
-    local red_sum_cpu_time = compute_cpu_time(db, self.task:get_red_jobs_ns())
+    local map_sum_cpu_time = compute_sum(db, self.task:get_map_jobs_ns(),
+                                         "cpu_time")
+    local red_sum_cpu_time = compute_sum(db, self.task:get_red_jobs_ns(),
+                                         "cpu_time")
+    local map_sum_real_time = compute_sum(db, self.task:get_map_jobs_ns(),
+                                          "real_time")
+    local red_sum_real_time = compute_sum(db, self.task:get_red_jobs_ns(),
+                                          "real_time")
     local map_real_time    = compute_real_time(db, self.task:get_map_jobs_ns())
     local red_real_time    = compute_real_time(db, self.task:get_red_jobs_ns())
 
-    io.stderr:write(string.format("#   Map sum(cpu_time)    %f\n",
+    io.stderr:write(string.format("#   Map sum(cpu_time)     %f\n",
                                   map_sum_cpu_time))
-    io.stderr:write(string.format("#   Reduce sum(cpu_time) %f\n",
+    io.stderr:write(string.format("#   Reduce sum(cpu_time)  %f\n",
                                   red_sum_cpu_time))
-    io.stderr:write(string.format("# Sum(cpu_time)          %f\n",
+    io.stderr:write(string.format("# Sum(cpu_time)           %f\n",
                                   map_sum_cpu_time + red_sum_cpu_time))
-    io.stderr:write(string.format("#   Map real time    %d\n", map_real_time))
-    io.stderr:write(string.format("#   Reduce real time %d\n", red_real_time))
-    io.stderr:write(string.format("# Real time          %d\n",
+    io.stderr:write(string.format("#   Map sum(real_time)    %f\n",
+                                  map_sum_real_time))
+    io.stderr:write(string.format("#   Reduce sum(real_time) %f\n",
+                                  red_sum_real_time))
+    io.stderr:write(string.format("# Sum(real_time)          %f\n",
+                                  map_sum_real_time + red_sum_real_time))
+    io.stderr:write(string.format("# Sum(sys_time)           %f\n",
+                                  map_sum_real_time + red_sum_real_time -
+                                    map_sum_cpu_time - red_sum_cpu_time))
+    io.stderr:write(string.format("#   Map cluster time      %f\n", map_real_time))
+    io.stderr:write(string.format("#   Reduce cluster time   %f\n", red_real_time))
+    io.stderr:write(string.format("# Cluster time            %f\n",
                                   map_real_time + red_real_time))
     --
     self.task:insert{
-      map_sum_cpu_time = map_sum_cpu_time,
-      red_sum_cpu_time = red_sum_cpu_time,
-      total_sum_cpu_time = map_sum_cpu_time + red_sum_cpu_time,
-      map_real_time = map_real_time,
-      red_real_time = red_real_time,
-      total_real_time = map_real_time + red_real_time,
-      iteration_time = total_time,
+      stats = {
+        map_sum_cpu_time = map_sum_cpu_time,
+        red_sum_cpu_time = red_sum_cpu_time,
+        total_sum_cpu_time = map_sum_cpu_time + red_sum_cpu_time,
+        map_sum_real_time = map_sum_real_time,
+        red_sum_real_time = red_sum_real_time,
+        total_sum_real_time = map_sum_real_time + red_sum_real_time,
+        sum_sys_time = (map_sum_real_time + red_sum_real_time -
+                          map_sum_cpu_time - red_sum_cpu_time),
+        map_real_time = map_real_time,
+        red_real_time = red_real_time,
+        total_real_time = map_real_time + red_real_time,
+        iteration_time = total_time,
+      }
     }
     --
-    io.stderr:write(string.format("# Iteration time %d\n", total_time))
+    io.stderr:write(string.format("# Server time %f\n", total_time))
   until self.finished
 end
 

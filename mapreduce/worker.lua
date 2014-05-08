@@ -37,10 +37,10 @@ function worker_methods:execute()
         end
         print(string.format("# \t Executing %s job _id: %q",
                             task_status, job:status_string()))
-        local t1 = os.time()
+        local t1 = utils.time()
         local elapsed_time = job:execute() -- MAP or REDUCE
         print(string.format("# \t\t Finished: %f elapsed user time, %d real time",
-                            elapsed_time, os.time() - t1))
+                            elapsed_time, utils.time() - t1))
         job_done = true
       else -- if dbname then ... else
         print("# \t Running, waiting for new jobs...")

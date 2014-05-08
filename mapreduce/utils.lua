@@ -66,6 +66,10 @@ local function sleep(n)
   mongo.sleep(n)
 end
 
+local function time()
+  return mongo.time()
+end
+
 -- makes a map/reduce job document
 local function make_job(key, value)
   assert(key~=nil and value~=nil, "Needs a key and a value")
@@ -74,7 +78,7 @@ local function make_job(key, value)
     value = value,
     worker = utils.DEFAULT_HOSTNAME,
     tmpname = utils.DEFAULT_TMPNAME,
-    creation_time = os.time(),
+    creation_time = time(),
     status = utils.STATUS.WAITING,
   }
 end
@@ -281,6 +285,7 @@ utils.get_table_fields_recursive = get_table_fields_recursive
 utils.get_hostname = get_hostname
 utils.check_mapreduce_result = check_mapreduce_result
 utils.sleep = sleep
+utils.time = time
 utils.make_job = make_job
 utils.connect = connect
 utils.escape = escape

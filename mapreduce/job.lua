@@ -81,7 +81,7 @@ local function job_mark_as_finished(self)
                     {
                       ["$set"] = {
                         status = STATUS.FINISHED,
-                        finished_time = os.time(),
+                        finished_time = utils.time(),
                       },
                     },
                     false,
@@ -98,9 +98,9 @@ function job_mark_as_written(self,cpu_time)
                     {
                       ["$set"] = {
                         status = STATUS.WRITTEN,
-                        written_time = os.time(),
+                        written_time = utils.time(),
                         cpu_time = cpu_time,
-                        real_time = os.time() - self.t,
+                        real_time = utils.time() - self.t,
                       },
                     },
                     false,
@@ -251,7 +251,7 @@ function job:__call(cnn, job_tbl, task_status,
     job_tbl = job_tbl,
     jobs_ns = jobs_ns,
     results_ns = results_ns,
-    t = os.time(),
+    t = utils.time(),
   }
   setmetatable(obj, { __index=self })
   --
