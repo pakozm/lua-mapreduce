@@ -192,7 +192,7 @@ function task:take_next_job(tmpname)
   local jobs_ns    = self:get_jobs_ns()
   local results_ns = self:get_results_ns()
   -- ask mongo to take a free job by setting its data
-  local t = os.time()
+  local t = utils.time()
   local query = {
     ["$or"] = {
       { status = STATUS.WAITING, },

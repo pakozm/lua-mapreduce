@@ -237,6 +237,7 @@ local function merge_iterator(gridfs, filenames)
   local counter = 0
   -- the following closure is the iterator
   return function()
+    local gridfs = gridfs
     local MAX_IT_WO_CGARBAGE = utils.MAX_IT_WO_CGARBAGE
     local assert       = assert
     local data         = data

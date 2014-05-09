@@ -89,6 +89,7 @@ local function job_mark_as_finished(self)
 end
 
 function job_mark_as_written(self,cpu_time)
+  self.written = true
   assert(self.job_tbl)
   local db = self.cnn:connect()
   assert( db:update(self.jobs_ns,
@@ -160,7 +161,7 @@ function job_prepare_map(self, g,
     for result_ns,builder in pairs(builders) do
       local gridfs_filename = string.format("%s/%s",grp_tmp_dir,result_ns)
       gridfs:remove_file(gridfs_filename)
-      builder:build(gridfs_filename)
+      assert( builder:build(gridfs_filename) )
     end
     local clock2 = os.clock()
     local elapsed_time = clock2 - clock1
@@ -206,7 +207,7 @@ function job_prepare_reduce(self, g)
       -- write the result to mongo
       builder:append(string_format("return %s,%s\n", escape(k), escape(v)))
     end
-    builder:build(res_file)
+    assert( builder:build(res_file) )
     local clock2 = os.clock()
     local elapsed_time = clock2-clock1
     -- job is marked as as written directly
@@ -237,6 +238,25 @@ end
 
 function job:get_results_ns()
   return self.results_ns
+end
+
+function job:mark_as_broken()
+  if not self.written then
+    assert(self.job_tbl)
+    local db = self.cnn:connect()
+    assert( db:update(self.jobs_ns,
+                      {
+                        _id = self:get_id(),
+                      },
+                      {
+                        ["$set"] = {
+                          status = STATUS.BROKEN,
+                          broken_time = utils.time(),
+                        },
+                      },
+                      false,
+                      false) )
+  end
 end
 
 -- constructor, receives a connection and a task instance

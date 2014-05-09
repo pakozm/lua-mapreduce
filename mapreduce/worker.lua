@@ -10,10 +10,7 @@ local cnn    = require "mapreduce.cnn"
 
 -- PRIVATE FUNCTIONS
 
--- WORKER METHODS
-local worker_methods = {}
-
-function worker_methods:execute()
+local worker_execute = function(self)
   print(" # HOSTNAME ", utils.get_hostname())
   local task       = self.task
   local iter       = 0
@@ -31,6 +28,7 @@ function worker_methods:execute()
       if counter % utils.MAX_IT_WO_CGARBAGE then collectgarbage("collect") end
       task:update()
       local task_status,job = task:take_next_job(self.tmpname)
+      self.current_job = job
       if job then
         if not job_done then
           print("# New TASK ready")
@@ -39,7 +37,8 @@ function worker_methods:execute()
                             task_status, job:status_string()))
         local t1 = utils.time()
         local elapsed_time = job:execute() -- MAP or REDUCE
-        print(string.format("# \t\t Finished: %f elapsed user time, %d real time",
+        self.current_job = nil
+        print(string.format("# \t\t Finished: %f elapsed user time, %f real time",
                             elapsed_time, utils.time() - t1))
         job_done = true
       else -- if dbname then ... else
@@ -65,6 +64,18 @@ function worker_methods:execute()
       ITER_SLEEP = math.min(MAX_SLEEP, ITER_SLEEP*1.5)
     end
     iter = iter + 1
+  end
+end
+
+-- WORKER METHODS
+local worker_methods = {}
+
+function worker_methods:execute()
+  if not xpcall(worker_execute, debug.traceback, self) then
+    if self.current_job then
+      self.current_job:mark_as_broken()
+    end
+    error("An error happens during a job execution")
   end
 end
 

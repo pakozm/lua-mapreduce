@@ -31,32 +31,32 @@ local function count_digits(n)
 end
 
 local function compute_real_time(db, ns)
-  local out_min = db:mapreduce(ns, [[
+  local out_min = assert( db:mapreduce(ns, [[
 function() { emit(0, this.started_time) } ]],
-               [[
+                                       [[
 function(k,v) {
   var min=v[0];
   for (var i=1; i<v.length; ++i)
     if (v[i]<min) min=v[i];
   return min;
-}]])
-  local out_max = db:mapreduce(ns, [[
+}]]) )
+  local out_max = assert( db:mapreduce(ns, [[
 function() { emit(0, this.written_time) } ]],
-               [[
+                                       [[
 function(k,v) {
   var max=v[0];
   for (var i=1; i<v.length; ++i)
     if (v[i]>max) max=v[i];
   return max;
-}]])
+}]]) )
   return out_max.results[1].value - out_min.results[1].value
 end
 
 local function compute_sum(db, ns, field)
-  local result = db:mapreduce(ns, string.format([[
+  local result = assert( db:mapreduce(ns, string.format([[
 function() { emit(0, this.%s) } ]], field),
-                              [[
-function(k,v) { return Array.sum(v); }]])
+                                      [[
+function(k,v) { return Array.sum(v); }]]) )
   return result.results[1].value
 end
 
@@ -235,7 +235,6 @@ function server_methods:configure(params)
   self.map_args             = params.map_args
   self.reduce_args          = params.reduce_args
   self.final_args           = params.final_args
-  self.sharded              = params.sharded
   local dbname = self.dbname
   local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
@@ -258,7 +257,6 @@ function server_methods:configure(params)
     scripts[name] = params[name]
   end
   local db = self.cnn:connect()
-  if self.sharded then self.cnn:set_sharded_gridfs() end
   --
   self.taskfn = require(scripts.taskfn)
   if scripts.finalfn then
