@@ -1,6 +1,6 @@
 return {
   init = function() end,
-  func = function(key,value)
+  mapfn = function(key,value)
     for line in io.lines(value) do
       for w in line:gmatch("[^%s]+") do
         emit(w,1)

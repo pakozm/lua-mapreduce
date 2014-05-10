@@ -28,6 +28,7 @@ local utils = {
   MAX_IT_WO_CGARBAGE   =  5000,
   MAX_TIME_WO_CGARBAGE =    60, -- 1 minute
   MAX_MAP_RESULT       =  5000,
+  MAX_TASKFN_VALUE_SIZE = 16*1024, -- 16 KB
   GRP_TMP_DIR = "/tmp/grouped",
   RED_JOB_TMP_DIR = "/tmp/red_job",
 }
@@ -294,5 +295,6 @@ utils.serialize_table_ipairs = serialize_table_ipairs
 utils.gridfs_lines_iterator = gridfs_lines_iterator
 utils.keys_sorted = keys_sorted
 utils.merge_iterator = merge_iterator
+utils.tojson = mongo.tojson
 
 return utils

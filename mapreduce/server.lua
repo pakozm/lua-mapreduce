@@ -97,13 +97,19 @@ local function server_prepare_map(self)
   local map_jobs_ns = self.task:get_map_jobs_ns()
   remove_pending_tasks(db, map_jobs_ns)
   -- create map tasks in mongo database
-  local f = self.taskfn.func
+  local f = self.taskfn.taskfn
   local keys_check = {}
   for key,value in coroutine.wrap(f) do
     count = count + 1
-    assert(tostring(key), "taskfn must return a string key")
+    assert(tostring(key), "taskfn must return a convertible to string key")
     assert(not keys_check[key], string.format("Duplicate key: %s", key))
     keys_check[key] = true
+    local tvalue = type(value)
+    if tvalue == "table" then
+      local json_value = utils.tojson(value)
+      assert(#json_value <= utils.MAX_TASKFN_VALUE_SIZE,
+             "Exceeded maximum taskfn value size")
+    end
     -- FIXME: check how to process task keys which are defined by a previously
     -- broken execution and didn't belong to the current task execution
     assert( db:insert(map_jobs_ns, make_job(key,value)) )
@@ -197,7 +203,7 @@ local function server_final(self)
     end
   end
   -- the reply could be: false/nil, true, "loop"
-  local reply = self.finalfn.func(pair_iterator)
+  local reply = self.finalfn.finalfn(pair_iterator)
   local remove_all = (reply == true) or (reply == "loop")
   if reply ~= "loop" and reply ~= true and reply ~= false and reply ~= nil then
     io.stderr:write("# WARNING!!! INCORRECT FINAL RETURN: " ..
@@ -231,10 +237,7 @@ local server_methods = {}
 function server_methods:configure(params)
   self.configured           = true
   self.configuration_params = params
-  self.task_args            = params.task_args
-  self.map_args             = params.map_args
-  self.reduce_args          = params.reduce_args
-  self.final_args           = params.final_args
+  self.init_args            = params.init_args
   local dbname = self.dbname
   local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
@@ -243,17 +246,15 @@ function server_methods:configure(params)
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
   for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
     assert(params[name] and type(params[name]) == "string",
-           string.format("Needs a %s module", name))
+           string.format("Needs a %s module with %s function", name, name))
     local aux = require(params[name])
     assert(type(aux) == "table",
            string.format("Module %s must return a table",
                          name))
-    assert(aux.func,
+    assert(aux[name],
            string.format("Module %s must return a table with the field func",
                          name))
-    assert(aux.init or not params[ name:gsub("fn","_args") ],
-           string.format("When args are given, a init function is needed: %s",
-                         name))
+    assert(aux.init, string.format("Init function is needed: %s", name))
     scripts[name] = params[name]
   end
   local db = self.cnn:connect()
@@ -262,12 +263,16 @@ function server_methods:configure(params)
   if scripts.finalfn then
     self.finalfn = require(scripts.finalfn)
   else
-    self.finalfn = { func = function() end }
+    self.finalfn = { finalfn = function() end }
   end
-  if self.taskfn.init then self.taskfn.init(self.task_args) end
-  if self.finalfn.init then self.finalfn.init(self.final_args) end
+  local init_functions = {
+    [self.taskfn.init] = self.taskfn.init,
+    [self.finalfn.init] = self.finalfn.init,
+  }
+  for _,init in pairs(init_functions) do init(self.init_args) end
   self.mapfn = params.mapfn
   self.reducefn = params.reducefn
+  self.partitionfn = params.partitionfn
 end
 
 -- makes all the map-reduce process, looping into the coroutines until all tasks

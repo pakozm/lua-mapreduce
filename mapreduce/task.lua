@@ -22,12 +22,12 @@ local function task_set_task_status(self, status, tbl, db)
     self.current_jobs_ns = self.map_jobs_ns
     self.current_results_ns = self.map_results_ns
     self.current_fname = self.tbl.mapfn
-    self.current_args  = self.tbl.map_args
+    self.current_args  = self.tbl.init_args
   elseif self.tbl.status == TASK_STATUS.REDUCE  then
     self.current_jobs_ns = self.red_jobs_ns
     self.current_results_ns = self.red_results_ns
     self.current_fname = self.tbl.reducefn
-    self.current_args  = self.tbl.reduce_args
+    self.current_args  = self.tbl.init_args
   end
 end
 
@@ -41,10 +41,8 @@ function task:create_collection(task_status, params, iteration)
                         --
                         mapfn          = params.mapfn,
                         reducefn       = params.reducefn,
-                        map_args       = params.map_args,
-                        reduce_args    = params.reduce_args,
                         partitionfn    = params.partitionfn,
-                        partition_args = params.partition_args,
+                        init_args      = params.init_args,
                         --
                         iteration      = iteration,
                         started_time   = 0,
@@ -166,7 +164,7 @@ function task:get_reduce_fname()
 end
 
 function task:get_reduce_args()
-  return self.tbl.reduce_args
+  return self.tbl.init_args
 end
 
 function task:get_partition_fname()
@@ -174,7 +172,7 @@ function task:get_partition_fname()
 end
 
 function task:get_partition_args()
-  return self.tbl.partition_args
+  return self.tbl.init_args
 end
 
 -- JOB INTERFACE
@@ -220,9 +218,8 @@ function task:take_next_job(tmpname)
                            self:get_fname(), self:get_args(),
                            jobs_ns, results_ns,
                            nil, -- not_executable = false
-                           self:get_reduce_fname(), self:get_reduce_args(),
-                           self:get_partition_fname(),
-                           self:get_partition_args())
+                           self:get_reduce_fname(),
+                           self:get_partition_fname())
     
   else -- if self.one_job then ...
     -- the job (if taken) will be freed, making it available to other worker

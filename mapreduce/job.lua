@@ -36,17 +36,22 @@ end
 
 -- loads the required Lua module, sets the upvalue for the "emit" function,
 -- executes init function if needed, and returns the resulting function
+local initialized = {}
 local funcs = { }
-local function job_get_func(self, fname, args, declare_global_emit)
+local function job_get_func(self, fname, func, args, declare_global_emit)
   local f = funcs[fname]
   if not f then
     f = { m = require(fname) }
-    if f.m.init then f.m.init(args) end
+    if f.m.init and not initialized[f.m.init] then
+      f.m.init(args)
+      initialized[f.m.init] = true
+    end
+    assert(f.m[func]) -- sanity check
     funcs[fname] = f
     if declare_global_emit then
       local k,v
       repeat
-        k,v = debug.getupvalue (f.m.func, 1)
+        k,v = debug.getupvalue (f.m[func], 1)
       until not k or k == "_ENV"
       assert(k == "_ENV")
       -- emit function is inserted in the environment of the function
@@ -58,6 +63,8 @@ local function job_get_func(self, fname, args, declare_global_emit)
     local result   = {}
     self.result    = result
     f.upvalue.emit = function(key, value)
+      assert(tostring(key),
+             "emit function must receive a convertible to string key")
       local result = result
       result[key]  = result[key] or {}
       local N      = #result[key]
@@ -68,7 +75,7 @@ local function job_get_func(self, fname, args, declare_global_emit)
       end
     end
   end
-  return f.m.func
+  return f.m[func]
 end
 
 local function job_mark_as_finished(self)
@@ -108,13 +115,11 @@ function job_mark_as_written(self,cpu_time)
                     false) )
 end
 
-function job_prepare_map(self, g,
-                         combiner_fname, combiner_args,
-                         partitioner_fname, partitioner_args)
+function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args)
   local partitioner = cached( job_get_func(self, partitioner_fname,
-                                           partitioner_args) )
+                                           "partitionfn", init_args) )
   -- combiner, apply the reduce function before put result to database
-  local combiner = job_get_func(self, combiner_fname, combiner_args)
+  local combiner = job_get_func(self, combiner_fname, "reducefn", init_args)
   self.combiner = combiner
   local map_key,map_value = self:get_pair()
   -- this closure is the responsible for all the map job
@@ -261,11 +266,10 @@ end
 
 -- constructor, receives a connection and a task instance
 function job:__call(cnn, job_tbl, task_status,
-                    fname, args,
+                    fname, init_args,
                     jobs_ns, results_ns,
                     not_executable,
-                    combiner_fname, combiner_args,
-                    partitioner, partitioner_args)
+                    combiner, partitioner)
   local obj = {
     cnn = cnn,
     job_tbl = job_tbl,
@@ -275,16 +279,21 @@ function job:__call(cnn, job_tbl, task_status,
   }
   setmetatable(obj, { __index=self })
   --
-  local fn,g
-  if not not_executable then
-    g = job_get_func(obj, fname, args, task_status == TASK_STATUS.MAP)
+  local fn,g,func
+  if task_status == TASK_STATUS.MAP then
+    func = "mapfn"
+  elseif task_status == TASK_STATUS.REDUCE then
+    func = "reducefn"
+  else
+    error("Incorrect task_status: " .. tostring(task_status) )
   end
   if not not_executable then
-    if task_status == "MAP" then
-      fn = job_prepare_map(obj, g,
-                           combiner_fname, combiner_args,
-                           partitioner, partitioner_args)
-    elseif task_status == "REDUCE" then
+    g = job_get_func(obj, fname, func, args, task_status == TASK_STATUS.MAP)
+  end
+  if not not_executable then
+    if task_status == TASK_STATUS.MAP then
+      fn = job_prepare_map(obj, g, combiner, partitioner, init_args)
+    elseif task_status == TASK_STATUS.REDUCE then
       fn = job_prepare_reduce(obj, g)
     end
   end

@@ -71,11 +71,12 @@ end
 local worker_methods = {}
 
 function worker_methods:execute()
-  if not xpcall(worker_execute, debug.traceback, self) then
+  local ok,msg = xpcall(worker_execute, debug.traceback, self)
+  if not ok then
     if self.current_job then
       self.current_job:mark_as_broken()
     end
-    error("An error happens during a job execution")
+    error(msg)
   end
 end
 
