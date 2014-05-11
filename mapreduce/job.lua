@@ -34,8 +34,8 @@ end
 
 -- PRIVATE FUNCTIONS AND METHODS
 
--- loads the required Lua module, sets the upvalue for the "emit" function,
--- executes init function if needed, and returns the resulting function
+-- loads the required Lua module, sets the "emit" function, executes init
+-- function if needed, and returns the resulting function
 local initialized = {}
 local funcs = { }
 local function job_get_func(self, fname, func, args, declare_global_emit)
