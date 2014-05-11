@@ -195,11 +195,13 @@ local function merge_iterator(fs, filenames, make_lines_iterator)
   -- take the next data of a given file number
   local take_next = function(which)
     if line_iterators[which] then
-      local line,_,_,_,_,pos,size = line_iterators[which]()
+      local line = line_iterators[which]()
       if line then
         data[which] = data[which] or {}
-        data[which][3],data[which][1],data[which][2] = line,load(line)()
-        return pos,size
+        data[which][3],data[which][1],data[which][2] =
+          line,assert(load(line),
+                      string.format("Impossible to load line '%s' from '%s'",
+                                    line, filenames[which]))()
       else
         data[which] = nil
         line_iterators[which] = nil
@@ -289,6 +291,22 @@ local function get_storage_from(str,new)
   return storage,path
 end
 
+local function remove(filename)
+  if not os.remove(filename) then
+    return os.execute(string.format("rm -f %s",filename))
+  else
+    return true
+  end
+end
+
+local function rename(old,new)
+  if not os.rename(old,new) then
+    return os.execute(string.format("mv -f %s %s",old,new))
+  else
+    return true
+  end
+end
+
 --------------------------------------------------------------------------------
 
 utils.iscallable = iscallable
@@ -307,6 +325,8 @@ utils.gridfs_lines_iterator = gridfs_lines_iterator
 utils.keys_sorted = keys_sorted
 utils.merge_iterator = merge_iterator
 utils.get_storage_from = get_storage_from
+utils.rename = rename
+utils.remove = remove
 --
 utils.tojson = mongo.tojson
 

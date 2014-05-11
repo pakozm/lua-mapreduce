@@ -72,14 +72,15 @@ function file_builder:build(path)
   assert(basename and #basename > 0,
          string.format("Given an incorrect path '%s'", path))
   os.execute(string.format("mkdir -p %s 2> /dev/null", basename))
-  assert( os.rename(self.tmpname, path) )
+  self.f:close()
+  assert( utils.rename(self.tmpname, path) )
   self.f = assert(io.open(self.tmpname,"w"),
                   string.format("Impossible to open %s", self.tmpname))
   return true
 end
 
 function file_builder_gc(self)
-  os.remove(self.tmpname)
+  utils.remove(self.tmpname)
 end
 
 function file_builder:__call()
@@ -105,7 +106,7 @@ function sharedfs:list(match_tbl)
 end
 
 function sharedfs:remove_file(filename)
-  os.remove(filename)
+  utils.remove(filename)
   return true
 end
 
@@ -142,20 +143,20 @@ end
 
 function sshfs:remove_file(filename)
   local filename = filename:gsub(self.path,self.tmpname)
-  os.remove(filename)
+  utils.remove(filename)
   return true
 end
 
 function sshfs_gc(self)
   -- remove only if it is empty
-  os.remove(self.tmpname)
+  utils.remove(self.tmpname)
 end
 
 function sshfs:__call(path,hostnames)
   local obj = { path=path:gsub("/$",""),
                 tmpname=os.tmpname(),
                 hostnames=hostnames }
-  os.remove(obj.tmpname)
+  utils.remove(obj.tmpname)
   os.execute(string.format("mkdir -p %s 2> /dev/null", obj.tmpname))
   setmetatable(obj, { __index=self, __gc=sshfs_gc })
   return obj
@@ -176,15 +177,14 @@ local router = function(cnn, hostnames, storage, path)
     return obj,
     function() file_builder() end,
     function(filename)
-      local path = filename:gsub(path,obj.tmpname)
-      local f = io.open(filename)
-      return f:lines()
+      local filename = filename:gsub(path,obj.tmpname)
+      return io.lines(filename)
     end
   elseif ( storage == "shared" or
            (storage == "sshfs" and (not hostnames or #hostnames == 0)) ) then
     return sharedfs(path),
     function() return file_builder() end,
-    function(filename) local f = io.open(filename) return f:lines() end
+    function(filename) return io.lines(filename) end
   else
     error(string.format("Given incorrect storage %s", storage))
   end

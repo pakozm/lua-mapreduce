@@ -149,7 +149,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local builders = {}
     for _,key in ipairs(keys) do
       local value     = result[key]
-      local value     = ( (#value > 1) and { combiner(key,value) } ) or value
+      if #value > 1 then value = { combiner(key,value) } end
       local part_key  = partitioner(key)
       local part_key  = assert(tonumber(part_key),
                                "Partition key must be a number")
@@ -160,7 +160,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
       local builder       = builders[result_ns] or make_builder()
       builders[result_ns] = builder
       local key_str       = escape(key)
-      local value_str     = serialize_table_ipairs(result[key])
+      local value_str     = serialize_table_ipairs(value)
       builder:append(string.format("return %s,%s\n", key_str, value_str))
     end
     -- create all the files

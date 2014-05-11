@@ -270,7 +270,7 @@ function server_methods:configure(params)
   self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
-  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
+  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn" } do
     assert(params[name] and type(params[name]) == "string",
            string.format("Needs a %s module with %s function", name, name))
     local aux = require(params[name])
@@ -289,7 +289,7 @@ function server_methods:configure(params)
   if scripts.finalfn then
     self.finalfn = require(scripts.finalfn)
   else
-    self.finalfn = { finalfn = function() end }
+    self.finalfn = { finalfn = function() end, init = function() end }
   end
   local init_functions = {
     [self.taskfn.init] = self.taskfn.init,
@@ -433,7 +433,7 @@ function server_methods:loop()
     io.stderr:write(string.format("# Server time %f\n", total_time))
   until self.finished
   local storage,path = self.configuration_params.storage:match("([^:]+):(/.*)")
-  if storage == "shared" then os.remove(path) end
+  if storage == "shared" then utils.remove(path) end
 end
 
 -- SERVER METATABLE
@@ -496,7 +496,7 @@ return "KEY4",{"hello\nworld"}
     local f_line = f:read("*l")
     assert(g_line == f_line)
   end
-  os.remove(tmpname)
+  utils.remove(tmpname)
   -- check merge over several filenames
   local N=3
   local list_tmpnames = {} for i=1,N do list_tmpnames[i] = os.tmpname() end
@@ -517,7 +517,7 @@ return "KEY4",{"hello\nworld"}
     f:close()
     gridfs:remove_file(list_tmpnames[i])
     gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
-    os.remove(list_tmpnames[i])
+    utils.remove(list_tmpnames[i])
   end
   merge_gridfs_files(cnn, db, gridfs, list_tmpnames, 'result', 'tmp.result2')
   local lines = {
