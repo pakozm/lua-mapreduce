@@ -1,13 +1,13 @@
-local utils = require "mapreduce.utils"
-
 local job = {
   _VERSION = "0.1",
   _NAME = "job",
 }
 
+local utils = require "mapreduce.utils"
+local fs = require "mapreduce.fs"
+
 local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
-local grp_tmp_dir = utils.GRP_TMP_DIR
 local serialize_table_ipairs = utils.serialize_table_ipairs
 local merge_iterator = utils.merge_iterator
 local keys_sorted = utils.keys_sorted
@@ -115,7 +115,8 @@ function job_mark_as_written(self,cpu_time)
                     false) )
 end
 
-function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args)
+function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
+                         storage, path)
   local partitioner = cached( job_get_func(self, partitioner_fname,
                                            "partitionfn", init_args) )
   -- combiner, apply the reduce function before put result to database
@@ -140,10 +141,10 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args)
     --
     local results_ns = self.results_ns
     -- partition of the map result using partition function; additionally, the
-    -- data is stored sorted by key; data is appended to GridFileBuilders
+    -- data is stored sorted by key; data is appended to builder
     local result     = self.result or {}
-    local db         = self.cnn:connect()
-    local gridfs     = self.cnn:gridfs()
+    local fs,make_builder,make_lines_iterator = fs.router(self.cnn,nil,
+                                                          storage,path)
     local keys       = keys_sorted(result)
     local builders = {}
     for _,key in ipairs(keys) do
@@ -156,17 +157,17 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args)
              "Partition key must be an integer")
       local result_ns = string_format("%s.P%d.M%s", results_ns,
                                       part_key, map_key)
-      local builder       = builders[result_ns] or self.cnn:grid_file_builder()
+      local builder       = builders[result_ns] or make_builder()
       builders[result_ns] = builder
       local key_str       = escape(key)
       local value_str     = serialize_table_ipairs(result[key])
       builder:append(string.format("return %s,%s\n", key_str, value_str))
     end
-    -- create all the GridFS files
+    -- create all the files
     for result_ns,builder in pairs(builders) do
-      local gridfs_filename = string.format("%s/%s",grp_tmp_dir,result_ns)
-      gridfs:remove_file(gridfs_filename)
-      assert( builder:build(gridfs_filename) )
+      local fs_filename = string.format("%s/%s",path,result_ns)
+      fs:remove_file(fs_filename)
+      assert( builder:build(fs_filename) )
     end
     local clock2 = os.clock()
     local elapsed_time = clock2 - clock1
@@ -176,7 +177,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args)
   end
 end
 
-function job_prepare_reduce(self, g)
+function job_prepare_reduce(self, g, storage, path)
   local key,value = self:get_pair()
   return function()
     -- take local variables
@@ -184,25 +185,28 @@ function job_prepare_reduce(self, g)
     local string_format = string.format
     local escape        = escape
     local clock1 = os.clock()
-    -- in reduce jobs, the value is a reference with the basename of the gridfs
+    -- in reduce jobs, the value is a reference with the basename of the fs
     -- filenames related to the given reduce job
     local part_key = key
     local job_file = value.file
     local res_file = value.result
+    local mappers  = value.mappers
     local gridfs   = self.cnn:gridfs()
     local builder  = self.cnn:grid_file_builder()
     gridfs:remove_file(res_file)
     -- take all the files which match the given job_file name
+    local fs,make_builder,make_lines_iterator = fs.router(self.cnn,mappers,
+                                                          storage,path)
     local filenames = {}
     local match_str = string.format("^%s.*", job_file)
-    local list = gridfs:list({ filename = { ["$regex"] = match_str } })
+    local list = fs:list({ filename = { ["$regex"] = match_str } })
     for v in list:results() do
       -- sanity check
       assert(v.filename:match(match_str))
       table.insert(filenames, v.filename)
     end
     -- iterate over a merge of all the input filenames
-    for k,v in merge_iterator(gridfs, filenames) do
+    for k,v in merge_iterator(fs, filenames, make_lines_iterator) do
       if #v > 1 then
         v = g(k,v) -- executes the REDUCE function
       else
@@ -217,6 +221,8 @@ function job_prepare_reduce(self, g)
     local elapsed_time = clock2-clock1
     -- job is marked as as written directly
     job_mark_as_written(self, elapsed_time)
+    -- remove all map result fs files
+    for _,name in ipairs(filenames) do fs:remove_file(name) end  
     return elapsed_time
   end
 end
@@ -269,7 +275,8 @@ function job:__call(cnn, job_tbl, task_status,
                     fname, init_args,
                     jobs_ns, results_ns,
                     not_executable,
-                    combiner, partitioner)
+                    combiner, partitioner,
+                    storage, path)
   local obj = {
     cnn = cnn,
     job_tbl = job_tbl,
@@ -292,9 +299,10 @@ function job:__call(cnn, job_tbl, task_status,
   end
   if not not_executable then
     if task_status == TASK_STATUS.MAP then
-      fn = job_prepare_map(obj, g, combiner, partitioner, init_args)
+      fn = job_prepare_map(obj, g, combiner, partitioner, init_args,
+                           storage, path)
     elseif task_status == TASK_STATUS.REDUCE then
-      fn = job_prepare_reduce(obj, g)
+      fn = job_prepare_reduce(obj, g, storage, path)
     end
   end
   obj.fn = fn or function() error("Forbidden execution of jobs here") end

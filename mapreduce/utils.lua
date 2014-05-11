@@ -30,7 +30,6 @@ local utils = {
   MAX_MAP_RESULT       =  5000,
   MAX_TASKFN_VALUE_SIZE = 16*1024, -- 16 KB
   GRP_TMP_DIR = "/tmp/grouped",
-  RED_JOB_TMP_DIR = "/tmp/red_job",
 }
 
 local STATUS = utils.STATUS
@@ -181,15 +180,15 @@ local function gridfs_lines_iterator(gridfs, filename)
   end -- return function()
 end
 
--- receives a gridfs object and an array of filenames (remote filenames) and
--- performs a merge operation over all its lines; the files content is expected
--- to be something like "return k,v" in every line, so them could be loaded as
--- Lua strings
-local function merge_iterator(gridfs, filenames)
+-- receives a s object, an array of filenames (remote filenames), and a lines
+-- iterator builder, and performs a merge operation over all its lines; the
+-- files content is expected to be something like "return k,v" in every line, so
+-- them could be loaded as Lua strings
+local function merge_iterator(fs, filenames, make_lines_iterator)
   -- initializes all the line iterators (one for each file)
   local line_iterators = {}
   for _,name in ipairs(filenames) do
-    line_iterators[ #line_iterators+1 ] = gridfs_lines_iterator(gridfs,name)
+    line_iterators[ #line_iterators+1 ] = make_lines_iterator(name)
   end
   local finished = false
   local data = {}
@@ -238,7 +237,7 @@ local function merge_iterator(gridfs, filenames)
   local counter = 0
   -- the following closure is the iterator
   return function()
-    local gridfs = gridfs
+    local fs = fs
     local MAX_IT_WO_CGARBAGE = utils.MAX_IT_WO_CGARBAGE
     local assert       = assert
     local data         = data
@@ -273,9 +272,21 @@ local function merge_iterator(gridfs, filenames)
       end
       return key,result
     end -- while not finished()
-    -- remove all map result gridfs files
-    -- for _,name in ipairs(filenames) do gridfs:remove_file(name) end  
   end -- return function
+end
+
+local function get_storage_from(str,new)
+  local str = str or "gridfs"
+  local storage,path = str:match("([^:]+):(/.*)")
+  if not storage then
+    assert(new) -- sanity check
+    storage = str:match("([^:]+)")
+    path = os.tmpname()
+    os.remove(path)
+  end
+  assert(storage and path,
+         string.format("Given incorrect storage %s", str))
+  return storage,path
 end
 
 --------------------------------------------------------------------------------
@@ -295,6 +306,8 @@ utils.serialize_table_ipairs = serialize_table_ipairs
 utils.gridfs_lines_iterator = gridfs_lines_iterator
 utils.keys_sorted = keys_sorted
 utils.merge_iterator = merge_iterator
+utils.get_storage_from = get_storage_from
+--
 utils.tojson = mongo.tojson
 
 return utils

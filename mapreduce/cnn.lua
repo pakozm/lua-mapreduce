@@ -29,6 +29,24 @@ function cnn:get_dbname()
   return self.dbname
 end
 
+function cnn:insert_error(who,msg)
+  local ns = string.format("%s.errors", self.dbname)
+  local db = self:connect()
+  db:insert(ns, { worker = who, msg = msg })
+end
+
+function cnn:get_errors()
+  local ns = string.format("%s.errors", self.dbname)
+  local db = self:connect()
+  return db:query(ns, {})
+end
+
+function cnn:remove_errors(ids)
+  local ns = string.format("%s.errors", self.dbname)
+  local db = self:connect()
+  db:remove(ns,{ _id = { ["$in"] = ids } })
+end
+
 function cnn:annotate_insert(ns,tbl,callback)
   self.pending_inserts = self.pending_inserts or {}
   self.pending_callbacks = self.pending_callbacks or {}

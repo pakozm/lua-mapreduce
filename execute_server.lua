@@ -43,6 +43,11 @@ s:configure{
   finalfn        = normalize(finalfn),
   init_args      = arg,
   result_ns      = result_ns,
+  -- storage = "gridfs[:PATH]", -- 'gridfs', 'shared', 'sshfs', with the
+  -- optional string :PATH. if not given PATH will be os.tmpname()
+  -- storage = "gridfs:/tmp/wordcount",
+  -- storage = "shared:/home/experimentos/tmp/wordcount",
+  -- storage = "sshfs:/tmp/wordcount",
 }
 mapreduce.utils.sleep(4)
 s:loop()
