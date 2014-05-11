@@ -15,7 +15,7 @@ return {
     coroutine.yield(4,"mapreduce/utils.lua")
   end,
 
-  mapfn = function(key,value)
+  mapfn = function(key,value,emit)
     for line in io.lines(value) do
       for w in line:gmatch("[^%s]+") do
         emit(w,1)
