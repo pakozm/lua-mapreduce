@@ -1,7 +1,7 @@
 -- sets the task job for the cluster, which indicates the workers which kind of
 -- work (MAP,REDUCE,...) must perform
 local task = {
-  _VERSION = "0.1",
+  _VERSION = "0.2",
   _NAME = "task",
 }
 

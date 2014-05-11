@@ -10,7 +10,7 @@
 -- module fs
 local fs = {
   _VERSION = "0.1",
-  _NAME = "fs",
+  _NAME = "mapreduce.fs",
 }
 
 local utils = require "mapreduce.utils"

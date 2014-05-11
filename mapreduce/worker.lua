@@ -1,5 +1,5 @@
 local worker = {
-  _VERSION = "0.1",
+  _VERSION = "0.2",
   _NAME = "mapreduce.worker",
 }
 
