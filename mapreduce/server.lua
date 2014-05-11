@@ -270,18 +270,21 @@ function server_methods:configure(params)
   self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
-  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn" } do
-    assert(params[name] and type(params[name]) == "string",
+  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
+    assert( (params[name] and type(params[name]) == "string") or
+            (not params[name] and name=="finalfn"),
            string.format("Needs a %s module with %s function", name, name))
-    local aux = require(params[name])
-    assert(type(aux) == "table",
-           string.format("Module %s must return a table",
-                         name))
-    assert(aux[name],
-           string.format("Module %s must return a table with the field func",
-                         name))
-    assert(aux.init, string.format("Init function is needed: %s", name))
-    scripts[name] = params[name]
+    if params[name] then
+      local aux = require(params[name])
+      assert(type(aux) == "table",
+             string.format("Module %s must return a table",
+                           name))
+      assert(aux[name],
+             string.format("Module %s must return a table with the field func",
+                           name))
+      assert(aux.init, string.format("Init function is needed: %s", name))
+      scripts[name] = params[name]
+    end
   end
   local db = self.cnn:connect()
   --

@@ -136,10 +136,10 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local result     = self.result or {}
     local fs,make_builder,make_lines_iterator = fs.router(self.cnn,nil,
                                                           storage,path)
-    local keys       = keys_sorted(result)
+    local keys     = keys_sorted(result)
     local builders = {}
     for _,key in ipairs(keys) do
-      local value     = result[key]
+      local value = result[key]
       if #value > 1 then value = { combiner(key,value) } end
       local part_key  = partitioner(key)
       local part_key  = assert(tonumber(part_key),
