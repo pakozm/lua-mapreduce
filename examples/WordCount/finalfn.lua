@@ -1,8 +1,6 @@
-local it = 0
 return {
   init = function() end,
-  func = function(pairs_iterator)
-    it = it + 1
+  finalfn = function(pairs_iterator)
     for key,value in pairs_iterator do
       print(value,key)
     end

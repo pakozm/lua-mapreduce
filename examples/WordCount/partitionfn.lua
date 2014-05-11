@@ -5,7 +5,7 @@ local offset_basis = 2166136261
 local MAX          = 2^32
 return {
   init = function() end,
-  func = function(key)
+  partitionfn = function(key)
     -- compute hash
     local h = offset_basis
     for i=1,#key do

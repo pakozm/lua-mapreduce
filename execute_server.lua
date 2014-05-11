@@ -9,13 +9,13 @@
 --
 --  [4] => mapfn Lua module, idem
 --
---  [6] => partitionfn Lua module, idem
+--  [5] => partitionfn Lua module, idem
 --
---  [7] => reducefn Lua module, idem
+--  [6] => reducefn Lua module, idem
 --
---  [8] => finalfn Lua module, idem
+--  [7] => finalfn Lua module, idem
 --
---  [9] => result_ns Lua string (OPTIONAL, by default all data will be removed)
+--  [8] => result_ns Lua string (OPTIONAL, by default all data will be removed)
 --
 -- IMPORTANT: the Lua modules (taskfn, mapfn, reducefn, ...) need to be in the
 -- LUA_PATH in all the machines where this code need to be executed
@@ -41,12 +41,13 @@ s:configure{
   partitionfn    = normalize(partitionfn),
   reducefn       = normalize(reducefn),
   finalfn        = normalize(finalfn),
-  task_args      = arg,
-  map_args       = arg,
-  partition_args = arg,
-  reduce_args    = arg,
-  final_args     = arg,
+  init_args      = arg,
   result_ns      = result_ns,
+  -- storage = "gridfs[:PATH]", -- 'gridfs', 'shared', 'sshfs', with the
+  -- optional string :PATH. if not given PATH will be os.tmpname()
+  -- storage = "gridfs:/tmp/wordcount",
+  -- storage = "shared:/home/experimentos/tmp/wordcount",
+  -- storage = "sshfs:/tmp/wordcount",
 }
 mapreduce.utils.sleep(4)
 s:loop()

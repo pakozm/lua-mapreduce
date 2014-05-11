@@ -9,25 +9,27 @@ local utils       = require "mapreduce.utils"
 local job         = require "mapreduce.job"
 local STATUS      = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
+local grp_tmp_dir = utils.GRP_TMP_DIR
+local get_storage_from = utils.get_storage_from
 
 -- PRIVATE FUNCIONS
 local function tmpname_summary(tmpname)
   return tmpname:match("([^/]+)$")
 end
 
-local function task_set_task_status(self, status, tbl, db)
+local function task_set_task_status(self, status, tbl)
   self.tbl = tbl or {}
   self.tbl.status = status
   if self.tbl.status == TASK_STATUS.MAP then
     self.current_jobs_ns = self.map_jobs_ns
     self.current_results_ns = self.map_results_ns
     self.current_fname = self.tbl.mapfn
-    self.current_args  = self.tbl.map_args
+    self.current_args  = self.tbl.init_args
   elseif self.tbl.status == TASK_STATUS.REDUCE  then
     self.current_jobs_ns = self.red_jobs_ns
     self.current_results_ns = self.red_results_ns
     self.current_fname = self.tbl.reducefn
-    self.current_args  = self.tbl.reduce_args
+    self.current_args  = self.tbl.init_args
   end
 end
 
@@ -41,15 +43,22 @@ function task:create_collection(task_status, params, iteration)
                         --
                         mapfn          = params.mapfn,
                         reducefn       = params.reducefn,
-                        map_args       = params.map_args,
-                        reduce_args    = params.reduce_args,
                         partitionfn    = params.partitionfn,
-                        partition_args = params.partition_args,
+                        init_args      = params.init_args,
+                        --
+                        storage        = params.storage,
+                        --
                         iteration      = iteration,
                         started_time   = 0,
                         finished_time  = 0,
                     }, },
                     true, false) )
+  self.tbl = params
+end
+
+function task:get_storage()
+  assert(self.tbl)
+  return get_storage_from(self.tbl.storage)
 end
 
 function task:insert_finished_time(t)
@@ -67,6 +76,13 @@ function task:insert_started_time(t)
                     { ["$set"] = {
                         started_time = t,
                     }, },
+                    false, false) )
+end
+
+function task:insert(t)
+  local db = self.cnn:connect()
+  assert( db:update(self.ns, { _id = "unique" },
+                    { ["$set"] = t },
                     false, false) )
 end
 
@@ -114,7 +130,7 @@ function task:set_task_status(status, extra)
                       { ["$set"] = extra },
                       true, false) )
   end
-  task_set_task_status(self, status)
+  task_set_task_status(self, status, self.tbl)
 end
 
 function task:get_task_ns()
@@ -158,7 +174,7 @@ function task:get_reduce_fname()
 end
 
 function task:get_reduce_args()
-  return self.tbl.reduce_args
+  return self.tbl.init_args
 end
 
 function task:get_partition_fname()
@@ -166,7 +182,7 @@ function task:get_partition_fname()
 end
 
 function task:get_partition_args()
-  return self.tbl.partition_args
+  return self.tbl.init_args
 end
 
 -- JOB INTERFACE
@@ -184,7 +200,7 @@ function task:take_next_job(tmpname)
   local jobs_ns    = self:get_jobs_ns()
   local results_ns = self:get_results_ns()
   -- ask mongo to take a free job by setting its data
-  local t = os.time()
+  local t = utils.time()
   local query = {
     ["$or"] = {
       { status = STATUS.WAITING, },
@@ -208,13 +224,14 @@ function task:take_next_job(tmpname)
   -- updated its data
   local job_tbl = db:find_one(jobs_ns, set_query)
   if job_tbl then
+    local storage,path = self:get_storage()
     return task_status,job(self.cnn, job_tbl, task_status,
                            self:get_fname(), self:get_args(),
                            jobs_ns, results_ns,
                            nil, -- not_executable = false
-                           self:get_reduce_fname(), self:get_reduce_args(),
+                           self:get_reduce_fname(),
                            self:get_partition_fname(),
-                           self:get_partition_args())
+                           storage, path)
     
   else -- if self.one_job then ...
     -- the job (if taken) will be freed, making it available to other worker
