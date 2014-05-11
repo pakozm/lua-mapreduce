@@ -38,7 +38,7 @@ end
 -- function if needed, and returns the resulting function
 local initialized = {}
 local funcs = { }
-local function job_get_func(self, fname, func, args, declare_global_emit)
+local function job_get_func(self, fname, func, args, declare_emit)
   local f = funcs[fname]
   if not f then
     f = { m = require(fname) }
@@ -48,21 +48,12 @@ local function job_get_func(self, fname, func, args, declare_global_emit)
     end
     assert(f.m[func]) -- sanity check
     funcs[fname] = f
-    if declare_global_emit then
-      local k,v
-      repeat
-        k,v = debug.getupvalue (f.m[func], 1)
-      until not k or k == "_ENV"
-      assert(k == "_ENV")
-      -- emit function is inserted in the environment of the function
-      f.upvalue = v
-    end
   end
-  if declare_global_emit then
+  if declare_emit then
     local MAX_MAP_RESULT = utils.MAX_MAP_RESULT
-    local result   = {}
-    self.result    = result
-    f.upvalue.emit = function(key, value)
+    local result = {}
+    self.result  = result
+    self.emit    = function(key,value)
       assert(tostring(key),
              "emit function must receive a convertible to string key")
       local result = result
@@ -135,7 +126,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local math_floor    = math.floor
     local serialize_table_ipairs = serialize_table_ipairs
     local clock1 = os.clock()
-    g(map_key,map_value) -- executes the MAP function, the result is
+    g(map_key,map_value,self.emit) -- executes the MAP function, the result is
     -- self.result the job is marked as finished, but not written
     job_mark_as_finished(self)
     --
