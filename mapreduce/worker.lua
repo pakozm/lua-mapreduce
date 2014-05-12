@@ -76,6 +76,7 @@ function worker_methods:execute()
     if self.current_job then
       self.current_job:mark_as_broken()
     end
+    self.cnn:flush_pending_inserts(0)
     self.cnn:insert_error(utils.get_hostname(), msg)
     error(msg)
   end
