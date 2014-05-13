@@ -51,4 +51,4 @@ collectgarbage("collect")
 local gridfs = assert( mongo.GridFS.New(db, dbname) )
 db:run_command("admin", { enableSharding = dbname })
 db:run_command("admin", { shardCollection = dbname .. ".fs.chunks",
-                          key = { files_d = 1 } })
+                          key = { files_id = 1 } })
