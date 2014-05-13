@@ -81,7 +81,7 @@ end
 function cnn:__call(connection_string, dbname, auth_table)
   local obj = { connection_string = connection_string,
                 dbname = dbname,
-                gridfs_dbname = dbname .. "_fs",
+                gridfs_dbname = dbname,
                 auth_table = auth_table }
   setmetatable(obj, { __index=self })
   return obj
