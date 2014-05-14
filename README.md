@@ -1,4 +1,4 @@
-lua-MapReduce
+Lua-MapReduce
 =============
 
 Lua MapReduce implementation based in MongoDB. It differs from
