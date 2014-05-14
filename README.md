@@ -1,7 +1,7 @@
-lua-mapreduce
+lua-MapReduce
 =============
 
-Lua map-reduce implementation based in MongoDB. It differs from
+Lua MapReduce implementation based in MongoDB. It differs from
 [ohitjoshi/lua-mapreduce](https://github.com/rohitjoshi/lua-mapreduce)
 in the basis of the communication between the processes. In order to
 allow fault tolerancy, and to reduce the communication protocol
