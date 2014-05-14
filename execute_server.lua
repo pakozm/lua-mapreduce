@@ -48,6 +48,9 @@ s:configure{
   -- storage = "gridfs:/tmp/wordcount",
   -- storage = "shared:/home/experimentos/tmp/wordcount",
   -- storage = "sshfs:/tmp/wordcount",
+  -- storage = "gridfs",
+  storage = "shared",
+  -- storage = "sshfs",
 }
 mapreduce.utils.sleep(4)
 s:loop()

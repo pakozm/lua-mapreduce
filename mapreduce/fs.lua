@@ -61,6 +61,12 @@ setmetatable(cursor,cursor)
 
 local file_builder = {}
 
+local function file_builder_open(self)
+  self.f = assert(io.open(self.tmpname,"w"),
+                  string.format("Impossible to open %s", self.tmpname))  
+  self.f:setvbuf("full")
+end
+
 function file_builder:append(data)
   self.f:write(data)
   return true
@@ -74,8 +80,7 @@ function file_builder:build(path)
   os.execute(string.format("mkdir -p %s 2> /dev/null", basename))
   self.f:close()
   assert( utils.rename(self.tmpname, path) )
-  self.f = assert(io.open(self.tmpname,"w"),
-                  string.format("Impossible to open %s", self.tmpname))
+  file_builder_open(self)
   return true
 end
 
@@ -84,13 +89,9 @@ function file_builder_gc(self)
 end
 
 function file_builder:__call()
-  local tmpname = os.tmpname()
-  local obj = {
-    tmpname = tmpname,
-    f = assert(io.open(tmpname,"w"),
-               string.format("Impossible to open %s", tmpname))
-  }
+  local obj = { tmpname = os.tmpname() }
   setmetatable(obj, { __index=self, __gc=file_builder_gc })
+  file_builder_open(obj)
   return obj
 end
 setmetatable(file_builder,file_builder)

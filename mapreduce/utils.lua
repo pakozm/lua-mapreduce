@@ -293,9 +293,7 @@ end
 
 local function remove(filename)
   if not os.remove(filename) then
-    if not os.execute(string.format("rm -f %s",filename)) then
-      return os.execute(string.format("rmdir %s", filename))
-    end
+    return os.execute(string.format("rm -fd %s",filename))
   else
     return true
   end
