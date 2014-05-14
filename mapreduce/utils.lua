@@ -45,21 +45,11 @@ local function connect(cnn_string, auth_table)
   return db
 end
 
-local function iscallable(obj)
-  local t = type(obj)
-  return t == "function" or (t == "table" and (getmetatable(obj) or {}).__call)
-end
-
 local function get_hostname()
   local p = io.popen("hostname","r")
   local hostname = p:read("*l")
   p:close()
   return hostname
-end
-
-local function check_mapreduce_result(res)
-  return res.ok==1,string.format("%s (code: %d)",
-                                 res.errmsg or "", res.code or 0)
 end
 
 local function sleep(n)
@@ -309,12 +299,68 @@ end
 
 --------------------------------------------------------------------------------
 
-utils.iscallable = iscallable
+-- unity test
+utils.utest = function()
+  local db = connect("localhost")
+  assert( not db:is_failed() )
+  assert( type(get_hostname()) == "string" )
+  assert( math.floor(time()) == math.floor(os.time()) )
+  assert( escape(120) == tostring(120) )
+  assert( escape("30") == "\"30\"" )
+  assert( escape("30\n") == "\"30\\n\"" )
+  assert( serialize_table_ipairs{1,2,3,"hola"} == "{1,2,3,\"hola\"}" )
+  assert( serialize_table_ipairs(keys_sorted{ c=1, a=2, b=3 }) == "{\"a\",\"b\",\"c\"}" )
+  -- lines iterator
+  local gridfs = mongo.GridFS.New(db, "test")
+  local lines = { "first line", "second", "third longer line", "a" }
+  gridfs:store_data(table.concat(lines,"\n"), "lines")
+  local i=0
+  for line in gridfs_lines_iterator(gridfs, "lines") do
+    i=i+1
+    assert(lines[i] == line)
+  end
+  -- merge iterator
+  local f1_lines = { "return 1,{1,1}",
+                     "return 2,{1}",
+                     "return 3,{1}", }
+  local f2_lines = { "return 1,{1,1,1,1}",
+                     "return 3,{1}",
+                     "return 4,{1}", }
+  local result = { {1, {1,1,1,1,1,1}},
+                   {2, {1}},
+                   {3, {1,1}},
+                   {4, {1}} }
+  gridfs:store_data(table.concat(f1_lines,"\n"), "f1")
+  gridfs:store_data(table.concat(f2_lines,"\n"), "f2")
+  local i=0
+  for key,value in merge_iterator(gridfs, { "f1", "f2" },
+                                  function(name)
+                                    return gridfs_lines_iterator(gridfs, name)
+                                  end) do
+    i=i+1
+    assert(result[i][1] == key)
+    assert(serialize_table_ipairs(result[i][2]) == serialize_table_ipairs(value))
+  end
+  --
+  for _,storage in ipairs{ "gridfs", "sshfs", "shared" } do
+    for _,path in ipairs{ "", ":/tmp/dir" } do
+      local a,b = get_storage_from(string.format("%s%s", storage, path),true)
+      assert(a == storage)
+      assert(b and (path=="" or (":"..b)==path))
+    end
+  end
+  --
+  local tmp1,tmp2 = os.tmpname(),os.tmpname()
+  assert( rename(tmp1,tmp2) )
+  assert( remove(tmp2) )
+end
+
+--------------------------------------------------------------------------------
+
 utils.get_table_fields = get_table_fields
 utils.get_table_fields_ipairs = get_table_fields_ipairs
 utils.get_table_fields_recursive = get_table_fields_recursive
 utils.get_hostname = get_hostname
-utils.check_mapreduce_result = check_mapreduce_result
 utils.sleep = sleep
 utils.time = time
 utils.make_job = make_job

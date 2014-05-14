@@ -1,5 +1,7 @@
+local utils  = require "mapreduce.utils"
 local server = require "mapreduce.server"
 local worker = require "mapreduce.worker"
-server.utest()
+utils.utest()
+-- server.utest()
 
 print("Ok")
