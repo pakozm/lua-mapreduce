@@ -207,24 +207,34 @@ local function server_final(self)
   local match_str = string.format("^%s",self.result_ns)
   local gridfs = self.cnn:gridfs()
   local files = gridfs:list({ filename = { ["$regex"] = match_str } })
-  local current_file
+  local files_tbl
+  local k=0
+  local current_filename
   local lines_iterator
   -- iterator which is given to final function, allows to traverse all the
   -- results by pairs key,value
   local pair_iterator = function()
+    if not files_tbl then
+      files_tbl = {}
+      for v in files:results() do
+        assert(v.filename:match(match_str))
+        table.insert(files_tbl, v.filename)
+      end
+      table.sort(files_tbl)
+    end
     local line
     repeat
       if lines_iterator then
         line = lines_iterator()
       end
       if not line then
-        current_file = files:next()
-        if current_file then
-          assert(current_file.filename:match(match_str))
-          lines_iterator = gridfs_lines_iterator(gridfs,current_file.filename)
+        k=k+1
+        current_filename = files_tbl[k]
+        if current_filename then
+          lines_iterator = gridfs_lines_iterator(gridfs,current_filename)
         end
       end
-    until current_file == nil or line ~= nil
+    until current_filename == nil or line ~= nil
     if line then
       return load(line)()
     end
