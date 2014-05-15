@@ -112,9 +112,7 @@ end
 ----------------------------------------------------------------------------
 ------------------------------ UNIT TEST -----------------------------------
 ----------------------------------------------------------------------------
-worker.utest = function(connection_string, dbname, auth_table)
-  local connection_string = connection_string or "localhost"
-  local dbname = dbname or "tmp"
+worker.utest = function()
 end
 
 ------------------------------------------------------------------------------

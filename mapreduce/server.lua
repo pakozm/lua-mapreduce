@@ -22,6 +22,9 @@ local get_storage_from = utils.get_storage_from
 -- PRIVATE FUNCTIONS AND METHODS
 
 local function count_digits(n)
+  -- sanity check
+  assert(n >= 0, "Only valid for positive integers")
+  if n == 0 then return 1 end
   local c = 0
   while n > 0 do
     n = math.floor(n/10)
@@ -455,86 +458,32 @@ end
 ----------------------------------------------------------------------------
 ------------------------------ UNIT TEST -----------------------------------
 ----------------------------------------------------------------------------
-server.utest = function(connection_string, dbname, auth_table)
-  -- check serialization of map results
-  local f = {
-    write = function(self,str)
-      self.tbl = self.tbl or {}
-      table.insert(self.tbl,str)
-    end,
-    concat = function(self) return table.concat(self.tbl or {}) end,
-  }
-  -- FIXME: that is totally broken now
-  utils.serialize_sorted_by_lines(f,{
-                                    KEY1 = {1,1,1,1,1},
-                                    KEY2 = {1,1,1},
-                                    KEY3 = {1},
-                                    KEY4 = { "hello\nworld" }
-                                    })
-  local result = [[return "KEY1",{1,1,1,1,1}
-return "KEY2",{1,1,1}
-return "KEY3",{1}
-return "KEY4",{"hello\nworld"}
-]]
-  assert(f:concat() == result)
-  -- check lines iterator over gridfs
-  local cnn = cnn("localhost", "tmp")
-  local db = cnn:connect()
-  local gridfs = cnn:gridfs()
-  local tmpname = os.tmpname()
-  local f = io.open(tmpname, "w")
-  f:write("first line\n")
-  f:write("second line\n")
-  f:write("third line\n")
-  -- a large line, through multiple chunks
-  for i=1,2^22 do
-    f:write(string.format("a%d",i))
-  end
-  f:write("\n")
-  f:close()
-  gridfs:remove_file(tmpname)
-  gridfs:store_file(tmpname,tmpname)
-  local f = io.open(tmpname)
-  for g_line in gridfs_lines_iterator(gridfs,tmpname) do
-    local f_line = f:read("*l")
-    assert(g_line == f_line)
-  end
-  utils.remove(tmpname)
-  -- check merge over several filenames
-  local N=3
-  local list_tmpnames = {} for i=1,N do list_tmpnames[i] = os.tmpname() end
-  local list_files = {}
-  for i,name in ipairs(list_tmpnames) do list_files[i]=io.open(name,"w") end
-  -- FILE 1
-  list_files[1]:write('return "a",{1,1,1}\n')
-  list_files[1]:write('return "b",{1}\n')
-  -- FILE 2
-  list_files[2]:write('return "a",{1}\n')
-  list_files[2]:write('return "c",{1,1,1,1,1,1,1,1,1}\n')
-  -- FILE 3
-  list_files[3]:write('return "a",{1,1}\n')
-  list_files[3]:write('return "c",{1}\n')
-  list_files[3]:write('return "d",{1,1,1,1,1,1}\n')
-  --
-  for i,f in ipairs(list_files) do
-    f:close()
-    gridfs:remove_file(list_tmpnames[i])
-    gridfs:store_file(list_tmpnames[i], list_tmpnames[i])
-    utils.remove(list_tmpnames[i])
-  end
-  merge_gridfs_files(cnn, db, gridfs, list_tmpnames, 'result', 'tmp.result2')
-  local lines = {
-    'return "a",{1,1,1,1,1,1}',
-    'return "c",{1,1,1,1,1,1,1,1,1,1}',
-    'return "d",{1,1,1,1,1,1}',
-  }
-  for line in gridfs_lines_iterator(gridfs, "result") do
-    assert(line == table.remove(lines,1))
-  end
-  for v in db:query('tmp.result2'):results() do
-    assert(v._id == "b")
-    assert(v.value == 1)
-  end
+server.utest = function()
+  assert(count_digits(0)    == 1)
+  assert(count_digits(1)    == 1)
+  assert(count_digits(9)    == 1)
+  assert(count_digits(10)   == 2)
+  assert(count_digits(99)   == 2)
+  assert(count_digits(111)  == 3)
+  assert(count_digits(1111) == 4)
+  -- compute real time and compute sum
+  local c  = cnn("localhost", "test")
+  local db = c:connect()
+  db:drop_collection("test.times")
+  local min_started,max_written = 10,20
+  db:insert("test.times",
+            {
+              started_time = min_started,
+              written_time = 16
+            })
+  db:insert("test.times",
+            {
+              started_time = 14,
+              written_time = max_written,
+            })
+  assert(compute_real_time(db, "test.times") == (max_written-min_started))
+  assert(compute_sum(db, "test.times", "started_time") == min_started + 14)
+  assert(compute_sum(db, "test.times", "written_time") == max_written + 16)
 end
 
 ------------------------------------------------------------------------------

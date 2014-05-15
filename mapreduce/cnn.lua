@@ -54,10 +54,12 @@ function cnn:annotate_insert(ns,tbl,callback)
   self.pending_callbacks[ns] = self.pending_callbacks[ns] or {}
   table.insert(self.pending_inserts[ns], tbl)
   if callback then table.insert(self.pending_callbacks[ns], callback) end
-  if #self.pending_inserts[ns] > utils.MAX_PENDING_INSERTS then
+  if #self.pending_inserts[ns] >= utils.MAX_PENDING_INSERTS then
     local db = self:connect()
     db:insert_batch(ns,self.pending_inserts[ns])
-    for i,func in ipairs(self.pending_callbacks[ns]) do func() end
+    for i,func in ipairs(self.pending_callbacks[ns]) do
+      func(self.pending_inserts[ns][i])
+    end
     self.pending_inserts[ns] = {}
     self.pending_callbacks[ns] = {}
   end
@@ -70,7 +72,7 @@ function cnn:flush_pending_inserts(max)
     for ns,tbl in pairs(self.pending_inserts) do
       if #tbl > max then
         db:insert_batch(ns,tbl)
-        for i,func in ipairs(self.pending_callbacks[ns]) do func() end
+        for i,func in ipairs(self.pending_callbacks[ns]) do func(tbl[i]) end
       end
     end
     self.pending_inserts   = nil
@@ -87,5 +89,52 @@ function cnn:__call(connection_string, dbname, auth_table)
   return obj
 end
 setmetatable(cnn,cnn)
+
+----------------------------------------------------------------------------
+------------------------------ UNIT TEST -----------------------------------
+----------------------------------------------------------------------------
+cnn.utest = function()
+  local c = cnn("localhost","test")
+  local db = assert( c:connect() )
+  assert( not db:is_failed() )
+  local gridfs = assert( c:gridfs() )
+  local builder = assert( c:grid_file_builder() )
+  assert(c:get_dbname() == "test")
+  -- insert error
+  db:drop_collection("test.errors")
+  for _,who in ipairs{ "utest1", "utest2" } do
+    for _,msg in ipairs{ "error 1", "error 2" } do
+      c:insert_error(who, msg)
+    end
+  end
+  assert(db:count("test.errors") == 4)
+  -- get errors
+  local ids = {}
+  local q = c:get_errors()
+  for r in q:results() do
+    assert(r.worker == "utest1" or r.worker == "utest2")
+    assert(r.msg == "error 1" or r.msg == "error 2")
+    table.insert(ids, r._id)
+  end
+  -- remove errors
+  c:remove_errors(ids)
+  assert(db:count("test.errors") == 0)
+  -- annotate insert
+  db:drop_collection("test.inserts")
+  local insert_results = {}
+  for i=1,utils.MAX_PENDING_INSERTS+10 do
+    c:annotate_insert("test.inserts", { _id=i, value=utils.time() },
+                      function(v)
+                        assert(v._id == i)
+                        table.insert(insert_results, i)
+                      end)
+  end
+  assert(#insert_results == utils.MAX_PENDING_INSERTS)
+  assert(db:count("test.inserts") == utils.MAX_PENDING_INSERTS)
+  c:flush_pending_inserts(0)
+  assert(db:count("test.inserts") == utils.MAX_PENDING_INSERTS+10)
+  assert(#insert_results == utils.MAX_PENDING_INSERTS+10)
+  for i=1,#insert_results do assert(insert_results[i] == i) end
+end
 
 return cnn

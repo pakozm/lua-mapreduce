@@ -107,8 +107,7 @@ function sharedfs:list(match_tbl)
 end
 
 function sharedfs:remove_file(filename)
-  utils.remove(filename)
-  return true
+  return utils.remove(filename)
 end
 
 function sharedfs:__call(path,hostnames)
@@ -138,14 +137,13 @@ function sshfs:list(match_tbl)
       processed[hostname] = true
     end
   end
-  match_tbl.filename["$regex"]:gsub(self.path,self.tmpname)
+  match_tbl.filename["$regex"] = match_tbl.filename["$regex"]:gsub(self.path,self.tmpname)
   return cursor(match_tbl)
 end
 
 function sshfs:remove_file(filename)
   local filename = filename:gsub(self.path,self.tmpname)
-  utils.remove(filename)
-  return true
+  return utils.remove(filename)
 end
 
 function sshfs_gc(self)
@@ -176,7 +174,7 @@ local router = function(cnn, hostnames, storage, path)
   elseif storage == "sshfs" and hostnames and #hostnames>0 then
     local obj = sshfs(path,hostnames)
     return obj,
-    function() file_builder() end,
+    function() return file_builder() end,
     function(filename)
       local filename = filename:gsub(path,obj.tmpname)
       return io.lines(filename)
@@ -188,6 +186,49 @@ local router = function(cnn, hostnames, storage, path)
     function(filename) return io.lines(filename) end
   else
     error(string.format("Given incorrect storage %s", storage))
+  end
+end
+
+----------------------------------------------------------------------------
+------------------------------ UNIT TEST -----------------------------------
+----------------------------------------------------------------------------
+fs.utest = function()
+  assert(make_wildcard_from_mongo_match({
+                                          filename = {
+                                            ["$regex"] = "/tmp/.*"
+                                          }
+                                        }) == "/tmp/*")
+  local cnn  = require "mapreduce.cnn"
+  local path = os.tmpname()
+  utils.remove(path)
+  os.execute("mkdir -p " .. path)
+  local c = cnn("localhost", "test")
+  local db = c:connect()
+  db:drop_collection("test.fs.files")
+  db:drop_collection("test.fs.chunks")
+  local hostnames = { "localhost" }
+  local lines = "first line\nsecond line\n"
+  for _,storage in ipairs{ "gridfs", "shared", "sshfs" } do
+    local fs,make_builder,make_lines_iterator = router(c, hostnames,
+                                                       storage, path)
+    local builder = make_builder()
+    local inv_files = {}
+    for _,file in ipairs{ "test1", "test2" } do
+      inv_files[file] = true
+      local file = (path .. "/" .. file):gsub("//", "/")
+      builder:append(lines)
+      builder:build(file)
+    end
+    local q = fs:list()
+    for v in q:results() do
+      assert(inv_files[v.filename:match("([^/]+)$")])
+      local lines_tbl = {}
+      for line in make_lines_iterator(v.filename) do
+        table.insert(lines_tbl, line)
+      end
+      assert(table.concat(lines_tbl,"\n").."\n" == lines)
+      assert( fs:remove_file(v.filename) )
+    end
   end
 end
 

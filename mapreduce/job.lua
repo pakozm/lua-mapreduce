@@ -301,6 +301,18 @@ function job:__call(cnn, job_tbl, task_status,
 end
 setmetatable(job,job)
 
+----------------------------------------------------------------------------
+------------------------------ UNIT TEST -----------------------------------
+----------------------------------------------------------------------------
+job.utest = function()
+  local f = cached(function(i) return i end)
+  for j=1,2 do
+    for i=1,10 do
+      assert(f(i) == i)
+    end
+  end
+end
+
 ------------------------------------------------------------------------
 
 job.reset_cache = reset_cache
