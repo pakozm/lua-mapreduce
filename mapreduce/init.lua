@@ -3,7 +3,7 @@ local server = require "mapreduce.server"
 local utils  = require "mapreduce.utils"
 
 local mapreduce = {
-  _VERSION = "0.2-1",
+  _VERSION = "0.2.1",
   _NAME    = "mapreduce",
   worker   = worker,
   server   = server,
