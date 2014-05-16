@@ -217,14 +217,13 @@ local function make_task_coroutine_wrap(self,ns)
                         end)
 end
 
--- removes all the tasks which are not WRITTEN
+-- removes all the tasks which are not WRITTEN and not FAILED
 local function remove_pending_tasks(db,ns)
   return db:remove(ns,
                    { ["$or"] = { { status = STATUS.BROKEN,  },
                                  { status = STATUS.WAITING  },
                                  { status = STATUS.FINISHED },
-                                 { status = STATUS.RUNNING  },
-                                 { status = STATUS.FAILED   }, },
+                                 { status = STATUS.RUNNING  }, },
                    },
                    false)
 end
