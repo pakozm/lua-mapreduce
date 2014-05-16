@@ -58,7 +58,7 @@
 ]]
 
 local task = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "task",
 }
 

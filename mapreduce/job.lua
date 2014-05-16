@@ -23,7 +23,7 @@
 -- written here in the storage given at 'task' collection.
 
 local job = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "job",
 }
 

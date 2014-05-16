@@ -21,7 +21,7 @@ local mongo = require "mongo"
 assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
 
 local utils = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "mapreduce.utils",
   DEFAULT_RW_TIMEOUT = 300, -- seconds
   DEFAULT_SLEEP = 1, -- seconds

@@ -101,7 +101,7 @@
 ]]
 
 local server = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "mapreduce.server",
 }
 
