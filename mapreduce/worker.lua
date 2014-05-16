@@ -40,7 +40,7 @@ local cnn    = require "mapreduce.cnn"
 
 -- executes the worker main loop; it runs querying the task object for new jobs
 local worker_execute = function(self)
-  print(" # HOSTNAME ", utils.get_hostname())
+  print("# HOSTNAME ", utils.get_hostname())
   local task       = self.task
   local iter       = 0
   local ITER_SLEEP = utils.DEFAULT_SLEEP
@@ -109,17 +109,20 @@ local worker_methods = {}
 -- execute wrapper, a public method which runs the jobs in a protected
 -- environment (xpcall)
 function worker_methods:execute()
-  local ok,msg = xpcall(worker_execute, debug.traceback, self)
-  if not ok then
-    -- in case of error, if a job is available, mark it as broken; additionally,
-    -- insert the error message into 'errors' collection
-    if self.current_job then
-      self.current_job:mark_as_broken()
+  repeat
+    local ok,msg = xpcall(worker_execute, debug.traceback, self)
+    if not ok then
+      -- in case of error, if a job is available, mark it as broken; additionally,
+      -- insert the error message into 'errors' collection
+      if self.current_job then
+        self.current_job:mark_as_broken()
+      end
+      self.cnn:flush_pending_inserts(0)
+      self.cnn:insert_error(utils.get_hostname(), msg)
+      print(string.format("Error executing a job: %s",msg))
+      utils.sleep(utils.DEFAULT_SLEEP*4)
     end
-    self.cnn:flush_pending_inserts(0)
-    self.cnn:insert_error(utils.get_hostname(), msg)
-    error(msg)
-  end
+  until ok
 end
 
 -- configuration of worker, allows to change parameters 'max_iter', 'max_sleep'

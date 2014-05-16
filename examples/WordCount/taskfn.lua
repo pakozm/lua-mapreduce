@@ -9,5 +9,6 @@ return {
     emit(2,"mapreduce/worker.lua")
     emit(3,"mapreduce/test.lua")
     emit(4,"mapreduce/utils.lua")
+    emit(5,"mapreduce/jarl.lua")
   end
 }

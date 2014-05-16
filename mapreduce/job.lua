@@ -330,6 +330,9 @@ function job:mark_as_broken()
                           status = STATUS.BROKEN,
                           broken_time = utils.time(),
                         },
+                        ["$inc"] = {
+                          repetitions = 1,
+                        },
                       },
                       false,
                       false) )

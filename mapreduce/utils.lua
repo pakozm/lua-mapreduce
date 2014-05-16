@@ -35,6 +35,7 @@ local utils = {
     BROKEN = 2,   -- a job which is detected as broken
     FINISHED = 3, -- a finished job
     WRITTEN = 4,  -- a finished job which results has been written
+    FAILED = 5,   -- a job which achieves the maximum number of retries
   },
   TASK_STATUS = {
     WAIT     = "WAIT",
@@ -42,6 +43,7 @@ local utils = {
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
   },
+  MAX_JOB_RETRIES      =     4,
   MAX_PENDING_INSERTS  = 50000,
   MAX_IT_WO_CGARBAGE   =  5000,
   MAX_TIME_WO_CGARBAGE =    60, -- 1 minute
@@ -88,6 +90,7 @@ local function make_job(key, value)
     tmpname = utils.DEFAULT_TMPNAME,
     creation_time = time(),
     status = utils.STATUS.WAITING,
+    repetitions = 0,
   }
 end
 

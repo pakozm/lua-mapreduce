@@ -110,6 +110,7 @@ local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
 local fs     = require "mapreduce.fs"
 
+local MAX_JOB_RETRIES = utils.MAX_JOB_RETRIES
 local DEFAULT_HOSTNAME = utils.DEFAULT_HOSTNAME
 local DEFAULT_IP = utils.DEFAULT_IP
 local DEFAULT_DATE = utils.DEFAULT_DATE
@@ -172,7 +173,28 @@ local function make_task_coroutine_wrap(self,ns)
   return coroutine.wrap(function()
                           repeat
                             local db = self.cnn:connect()
-                            local M = db:count(ns, { status = STATUS.WRITTEN })
+                            -- remove broken jobs with >= MAX_JOB_RETRIES
+                            -- FIXME: check the write concern
+                            assert( db:update(ns,
+                                              {
+                                                status = STATUS.BROKEN,
+                                                repetitions = {
+                                                  ["$gte"] = MAX_JOB_RETRIES
+                                                },
+                                              },
+                                              {
+                                                ["$set"] = { status = STATUS.FAILED },
+                                              },
+                                              false,   -- no create a new document if not exists
+                                              true) )  -- update all the matches
+                            -- count written or failed jobs
+                            local M = db:count(ns,
+                                               {
+                                                 ["$or"] = {
+                                                   { status = STATUS.WRITTEN },
+                                                   { status = STATUS.FAILED },
+                                                 }
+                                               })
                             if M then
                               io.stderr:write(string.format("\r\t %6.1f %% ",
                                                             M/N*100))
@@ -201,7 +223,9 @@ local function remove_pending_tasks(db,ns)
                    { ["$or"] = { { status = STATUS.BROKEN,  },
                                  { status = STATUS.WAITING  },
                                  { status = STATUS.FINISHED },
-                                 { status = STATUS.RUNNING  }, } },
+                                 { status = STATUS.RUNNING  },
+                                 { status = STATUS.FAILED   }, },
+                   },
                    false)
 end
 
@@ -533,6 +557,13 @@ function server_methods:loop()
     io.stderr:write(string.format("# Cluster time            %f\n",
                                   map_real_time + red_real_time))
     --
+    local num_failed_maps = db:count(self.task:get_map_jobs_ns(),
+                                     { status = STATUS.FAILED })
+    local num_failed_reds = db:count(self.task:get_red_jobs_ns(),
+                                     { status = STATUS.FAILED })
+    io.stderr:write(string.format("# Failed maps     %d\n", num_failed_maps))
+    io.stderr:write(string.format("# Failed reduces  %d\n", num_failed_reds))
+    --
     self.task:insert{
       stats = {
         map_sum_cpu_time = map_sum_cpu_time,
@@ -547,6 +578,8 @@ function server_methods:loop()
         red_real_time = red_real_time,
         total_real_time = map_real_time + red_real_time,
         iteration_time = total_time,
+        failed_map_jobs = num_failed_maps,
+        failed_red_jobs = num_failed_reds,
       }
     }
     --
