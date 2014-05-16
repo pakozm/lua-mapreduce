@@ -5,4 +5,4 @@ lua execute_server.lua localhost wordcount \
     examples.WordCount.partitionfn \
     examples.WordCount.reducefn \
     examples.WordCount.finalfn \
-    examples.WordCount.reducefn
+    examples.WordCount.reducefn $@

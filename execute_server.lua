@@ -15,7 +15,9 @@
 --
 --  [7] => finalfn Lua module, idem (OPTIONAL, by default it is nothing)
 --
---  [8] => combinerfn Lua module, idem (OPTIONAL, by default it is nothing)
+--  [8] => combinerfn Lua module, idem (OPTIONAL, by default it is nothing. It could be nil)
+--
+--  [9] => storage (OPTIONAL, by default is nothing. It could be nil)
 --
 -- IMPORTANT: the Lua modules (taskfn, mapfn, reducefn, ...) need to be in the
 -- LUA_PATH in all the machines where this code need to be executed
@@ -28,6 +30,9 @@ local partitionfn = table.remove(arg, 1)
 local reducefn    = table.remove(arg, 1)
 local finalfn     = table.remove(arg, 1)
 local combinerfn  = table.remove(arg, 1)
+local storage     = table.remove(arg, 1)
+if combinerfn == "nil" then combinerfn = nil end
+if storage == "nil" then storage = nil end
 --
 local function normalize(name)
   return name:gsub("/","."):gsub("%.lua$","")
@@ -43,6 +48,7 @@ s:configure{
   finalfn        = (finalfn and normalize(finalfn)) or nil,
   combinerfn     = (combinerfn and normalize(combinerfn)) or nil,
   init_args      = arg,
+  storage        = storage,
   -- storage = "gridfs[:PATH]", -- 'gridfs', 'shared', 'sshfs', with the
   -- optional string :PATH. if not given PATH will be os.tmpname()
   -- storage = "gridfs:/tmp/wordcount",

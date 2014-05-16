@@ -254,8 +254,6 @@ function job_prepare_reduce(self, g, storage, path)
     local match_str = string.format("^%s.*", job_file)
     local list = fs:list({ filename = { ["$regex"] = match_str } })
     for v in list:results() do
-      -- sanity check
-      assert(v.filename:match(match_str))
       table.insert(filenames, v.filename)
     end
     --------------------------------------------------------------------------
