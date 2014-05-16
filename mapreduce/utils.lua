@@ -297,6 +297,15 @@ local function rename(old,new)
   end
 end
 
+local function clear_table(t)
+  for k,_ in pairs(t) do t[k] = nil end
+end
+
+local function copy_table_ipairs(dst,src)
+  for i=#src+1,#dst do dst[i] = nil end
+  for i=1,#src do dst[i] = src[i] end
+end
+
 --------------------------------------------------------------------------------
 
 ----------------------------------------------------------------------------
@@ -355,6 +364,19 @@ utils.utest = function()
   local tmp1,tmp2 = os.tmpname(),os.tmpname()
   assert( rename(tmp1,tmp2) )
   assert( remove(tmp2) )
+  --
+  local t = { 1, 3, a=4, b=5 }
+  clear_table(t)
+  assert(not t[1] and not t[2] and not t.a and not t.b)
+  --
+  local src  = { 1, 2, 3, 4 }
+  local dst1 = { 5, 6, 7}
+  local dst2 = { 5, 6, 7, 8, 9, 10}
+  copy_table_ipairs(dst1,src)
+  copy_table_ipairs(dst2,src)
+  assert(#dst1 == #src)
+  assert(#dst2 == #src)
+  for i=1,#src do assert(dst1[i] == src[i] and dst2[i] == src[i]) end
 end
 
 --------------------------------------------------------------------------------
@@ -375,6 +397,8 @@ utils.merge_iterator = merge_iterator
 utils.get_storage_from = get_storage_from
 utils.rename = rename
 utils.remove = remove
+utils.clear_table = clear_table
+utils.copy_table_ipairs = copy_table_ipairs
 --
 utils.tojson = mongo.tojson
 

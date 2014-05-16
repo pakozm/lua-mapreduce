@@ -111,23 +111,25 @@ local function server_prepare_map(self)
   local map_jobs_ns = self.task:get_map_jobs_ns()
   remove_pending_tasks(db, map_jobs_ns)
   -- create map tasks in mongo database
-  local f = self.taskfn.taskfn
   local keys_check = {}
-  for key,value in coroutine.wrap(f) do
-    count = count + 1
-    assert(tostring(key), "taskfn must return a convertible to string key")
-    assert(not keys_check[key], string.format("Duplicate key: %s", key))
-    keys_check[key] = true
-    local tvalue = type(value)
-    if tvalue == "table" then
-      local json_value = utils.tojson(value)
-      assert(#json_value <= utils.MAX_TASKFN_VALUE_SIZE,
-             "Exceeded maximum taskfn value size")
-    end
-    -- FIXME: check how to process task keys which are defined by a previously
-    -- broken execution and didn't belong to the current task execution
-    assert( db:insert(map_jobs_ns, make_job(key,value)) )
-  end
+  self.taskfn.taskfn(function(key,value)
+                       count = count + 1
+                       assert(tostring(key),
+                              "taskfn must return a convertible to string key")
+                       assert(not keys_check[key],
+                              string.format("Duplicate key: %s", key))
+                       keys_check[key] = true
+                       local tvalue = type(value)
+                       if tvalue == "table" then
+                         local json_value = utils.tojson(value)
+                         assert(#json_value <= utils.MAX_TASKFN_VALUE_SIZE,
+                                "Exceeded maximum taskfn value size")
+                       end
+                       -- FIXME: check how to process task keys which are
+                       -- defined by a previously broken execution and didn't
+                       -- belong to the current task execution
+                       assert( db:insert(map_jobs_ns, make_job(key,value)) )
+                     end)
   self.task:set_task_status(TASK_STATUS.MAP)
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
   return make_task_coroutine_wrap(self, map_jobs_ns),count
@@ -278,14 +280,14 @@ function server_methods:configure(params)
   self.configuration_params = params
   self.init_args            = params.init_args
   local dbname = self.dbname
-  local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
   self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
-  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
+  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn",
+                      "combinerfn" } do
     assert( (params[name] and type(params[name]) == "string") or
-            (not params[name] and name=="finalfn"),
+              (not params[name] and (name=="finalfn" or name == "combinerfn") ),
            string.format("Needs a %s module with %s function", name, name))
     if params[name] then
       local aux = require(params[name])
@@ -293,8 +295,8 @@ function server_methods:configure(params)
              string.format("Module %s must return a table",
                            name))
       assert(aux[name],
-             string.format("Module %s must return a table with the field func",
-                           name))
+             string.format("Module %s must return a table with the field %s",
+                           name, name))
       assert(aux.init, string.format("Init function is needed: %s", name))
       scripts[name] = params[name]
     end

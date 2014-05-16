@@ -44,6 +44,7 @@ function task:create_collection(task_status, params, iteration)
                         mapfn          = params.mapfn,
                         reducefn       = params.reducefn,
                         partitionfn    = params.partitionfn,
+                        combinerfn     = params.combinerfn,
                         init_args      = params.init_args,
                         --
                         storage        = params.storage,

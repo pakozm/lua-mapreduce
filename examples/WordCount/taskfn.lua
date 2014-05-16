@@ -4,10 +4,10 @@ local init = function(arg)
 end
 return {
   init = init,
-  taskfn = function()
-    coroutine.yield(1,"mapreduce/server.lua")
-    coroutine.yield(2,"mapreduce/worker.lua")
-    coroutine.yield(3,"mapreduce/test.lua")
-    coroutine.yield(4,"mapreduce/utils.lua")
+  taskfn = function(emit)
+    emit(1,"mapreduce/server.lua")
+    emit(2,"mapreduce/worker.lua")
+    emit(3,"mapreduce/test.lua")
+    emit(4,"mapreduce/utils.lua")
   end
 }

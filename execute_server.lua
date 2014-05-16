@@ -13,9 +13,9 @@
 --
 --  [6] => reducefn Lua module, idem
 --
---  [7] => finalfn Lua module, idem
+--  [7] => finalfn Lua module, idem (OPTIONAL, by default it is nothing)
 --
---  [8] => result_ns Lua string (OPTIONAL, by default all data will be removed)
+--  [8] => combinerfn Lua module, idem (OPTIONAL, by default it is nothing)
 --
 -- IMPORTANT: the Lua modules (taskfn, mapfn, reducefn, ...) need to be in the
 -- LUA_PATH in all the machines where this code need to be executed
@@ -27,7 +27,7 @@ local mapfn       = table.remove(arg, 1)
 local partitionfn = table.remove(arg, 1)
 local reducefn    = table.remove(arg, 1)
 local finalfn     = table.remove(arg, 1)
-local result_ns   = table.remove(arg, 1)
+local combinerfn  = table.remove(arg, 1)
 --
 local function normalize(name)
   return name:gsub("/","."):gsub("%.lua$","")
@@ -40,16 +40,16 @@ s:configure{
   mapfn          = normalize(mapfn),
   partitionfn    = normalize(partitionfn),
   reducefn       = normalize(reducefn),
-  finalfn        = normalize(finalfn),
+  finalfn        = (finalfn and normalize(finalfn)) or nil,
+  combinerfn     = (combinerfn and normalize(combinerfn)) or nil,
   init_args      = arg,
-  result_ns      = result_ns,
   -- storage = "gridfs[:PATH]", -- 'gridfs', 'shared', 'sshfs', with the
   -- optional string :PATH. if not given PATH will be os.tmpname()
   -- storage = "gridfs:/tmp/wordcount",
   -- storage = "shared:/home/experimentos/tmp/wordcount",
   -- storage = "sshfs:/tmp/wordcount",
   -- storage = "gridfs",
-  storage = "shared",
+  -- storage = "shared",
   -- storage = "sshfs",
 }
 mapreduce.utils.sleep(4)
