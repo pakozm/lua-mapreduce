@@ -3,7 +3,7 @@
   
   Copyright 2014, Francisco Zamora-Martinez
   
-  The APRIL-ANN toolkit is free software; you can redistribute it and/or modify it
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
   under the terms of the GNU General Public License version 3 as
   published by the Free Software Foundation
   
@@ -16,6 +16,90 @@
   along with this library; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ]]
+
+-- The server is one of the most important classes, together with job
+-- class. Server allows to configure a (iterative) MapReduce task. It configures
+-- 'map_jobs' and 'red_jobs' collections, where workers look to run jobs. The
+-- programmer needs to execute server:configure(...) method in order to setup
+-- the MapReduce task you want to execute. server:loop() method executes the
+-- task and take note of statistics which will be written using a task object.
+
+--[[ Example of map_jobs collection for wordcount
+> db.map_jobs.find().limit(2).pretty()
+{
+	"_id" : "1",
+	"value" : "mapreduce/server.lua",
+	"creation_time" : 1400225797.659415,
+	"started_time" : 1400225798.321171,
+	"finished_time" : 1400225798.328765,
+	"written_time" : 1400225798.346263,
+	"cpu_time" : 0.017617999999999998,
+	"real_time" : 0.022084951400756836,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+{
+	"_id" : "2",
+	"value" : "mapreduce/worker.lua",
+	"creation_time" : 1400225797.659444,
+	"started_time" : 1400225798.346911,
+	"finished_time" : 1400225798.350307,
+	"written_time" : 1400225798.358262,
+	"cpu_time" : 0.005623000000000003,
+	"real_time" : 0.008959054946899414,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+]]
+
+--[[ Example of red_jobs collection for wordcount
+> db.red_jobs.find().limit(2).pretty()
+{
+	"_id" : "1",
+	"value" : {
+		"result" : "result.P1",
+		"mappers" : [
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME"
+		],
+		"file" : "/tmp/lua_sQHr2G/map_results.P1"
+	},
+	"creation_time" : 1400225798.665791,
+	"started_time" : 1400225799.41176,
+	"written_time" : 1400225799.423528,
+	"cpu_time" : 0.006439999999999994,
+	"real_time" : 0.008752822875976562,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME",
+}
+{
+	"_id" : "2",
+	"value" : {
+		"result" : "result.P2",
+		"mappers" : [
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME"
+		],
+		"file" : "/tmp/lua_sQHr2G/map_results.P2"
+	},
+	"creation_time" : 1400225798.665803,
+	"started_time" : 1400225799.426011,
+	"written_time" : 1400225799.435997,
+	"cpu_time" : 0.004669999999999994,
+	"real_time" : 0.006902933120727539,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+]]
+
 local server = {
   _VERSION = "0.2",
   _NAME = "mapreduce.server",

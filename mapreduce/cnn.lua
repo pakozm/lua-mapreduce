@@ -3,7 +3,7 @@
   
   Copyright 2014, Francisco Zamora-Martinez
   
-  The APRIL-ANN toolkit is free software; you can redistribute it and/or modify it
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
   under the terms of the GNU General Public License version 3 as
   published by the Free Software Foundation
   
@@ -16,6 +16,11 @@
   along with this library; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ]]
+
+-- The cnn class represents an abstraction layer over MongoDB. It allows to
+-- retrieve connections, gridfs objects, file builders, insertion of errors and
+-- batch insertion procedure.
+
 local mongo = require "mongo"
 local utils = require "mapreduce.utils"
 

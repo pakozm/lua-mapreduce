@@ -3,7 +3,7 @@
   
   Copyright 2014, Francisco Zamora-Martinez
   
-  The APRIL-ANN toolkit is free software; you can redistribute it and/or modify it
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
   under the terms of the GNU General Public License version 3 as
   published by the Free Software Foundation
   
@@ -21,10 +21,8 @@
 -- to use different kinds of intermediate storage, the gridfs storage, the
 -- shared storage which uses directories in a NFS/samba storage, or the sshfs
 -- storage which allows to use local file system for writing but uses scp for
--- reading.
-
--- router function allow to decide which kind of storage will be used, and
--- returns an instance of GridFS or sshfs or sharedfs classes.
+-- reading. The router function allow to decide which kind of storage will be
+-- used, and returns an instance of GridFS or sshfs or sharedfs classes.
 
 -- module fs
 local fs = {
