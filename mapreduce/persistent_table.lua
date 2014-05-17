@@ -93,6 +93,7 @@ local local_set = methods.set
 
 -- constructor using encapsulation design pattern in Lua
 function persistent_table:__call(name, cnn_string, dbname, auth_table)
+  assert(type(name) == "string","First argument is a string name for the table")
   local cnn_string = cnn_string or "localhost"
   local dbname = dbname or "tmp"
   -- obj is hidden inside a closure
