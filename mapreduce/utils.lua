@@ -43,7 +43,8 @@ local utils = {
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
   },
-  MAX_JOB_RETRIES      =     4,
+  MAX_WORKER_RETRIES   =     3,
+  MAX_JOB_RETRIES      =     3,
   MAX_PENDING_INSERTS  = 50000,
   MAX_IT_WO_CGARBAGE   =  5000,
   MAX_TIME_WO_CGARBAGE =    60, -- 1 minute

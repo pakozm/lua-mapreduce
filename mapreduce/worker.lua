@@ -109,6 +109,8 @@ local worker_methods = {}
 -- execute wrapper, a public method which runs the jobs in a protected
 -- environment (xpcall)
 function worker_methods:execute()
+  local num_failed_jobs = 0
+  local failed_jobs = {}
   repeat
     local ok,msg = xpcall(worker_execute, debug.traceback, self)
     if not ok then
@@ -116,13 +118,22 @@ function worker_methods:execute()
       -- insert the error message into 'errors' collection
       if self.current_job then
         self.current_job:mark_as_broken()
+        local id = self.current_job:get_id()
+        if not failed_jobs[id] then
+          num_failed_jobs = num_failed_jobs + 1
+        end
+        failed_jobs[id] = true
       end
       self.cnn:flush_pending_inserts(0)
       self.cnn:insert_error(utils.get_hostname(), msg)
       print(string.format("Error executing a job: %s",msg))
       utils.sleep(utils.DEFAULT_SLEEP*4)
     end
-  until ok
+  until ok or num_failed_jobs >= utils.MAX_WORKER_RETRIES
+  print(string.format("# Worker retries: %d",num_failed_jobs))
+  if num_failed_jobs >= utils.MAX_WORKER_RETRIES then
+    error("Maximum number of retries achieved")
+  end
 end
 
 -- configuration of worker, allows to change parameters 'max_iter', 'max_sleep'
