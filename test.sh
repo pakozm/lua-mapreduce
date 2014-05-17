@@ -51,5 +51,23 @@ for storage in gridfs shared sshfs; do
         echo "ERROR"
         exit 1
     fi
+    ## INIT SCRIPT
+    screen -d -m ./execute_example_worker.sh
+    diff <(lua execute_server.lua localhost wordcount \
+        examples.WordCount \
+        examples.WordCount \
+        examples.WordCount \
+        examples.WordCount \
+        examples.WordCount \
+        examples.WordCount \
+        $storage | awk '{ print $1,$2 }' | sort) \
+        <(cat mapreduce/server.lua \
+        mapreduce/worker.lua \
+        mapreduce/test.lua \
+        mapreduce/utils.lua | lua misc/naive.lua | awk '{ print $1,$2 }' | sort) > /dev/null
+    if [[ $? -ne 0 ]]; then
+        echo "ERROR"
+        exit 1
+    fi
     echo "Ok with storage $storage"
 done
