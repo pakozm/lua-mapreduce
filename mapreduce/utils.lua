@@ -1,9 +1,27 @@
+--[[
+  This file is part of Lua-MapReduce
+  
+  Copyright 2014, Francisco Zamora-Martinez
+  
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License version 3 as
+  published by the Free Software Foundation
+  
+  This library is distributed in the hope that it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+  for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this library; if not, write to the Free Software Foundation,
+  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+]]
 local mongo = require "mongo"
 
 assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
 
 local utils = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "mapreduce.utils",
   DEFAULT_RW_TIMEOUT = 300, -- seconds
   DEFAULT_SLEEP = 1, -- seconds
@@ -17,6 +35,7 @@ local utils = {
     BROKEN = 2,   -- a job which is detected as broken
     FINISHED = 3, -- a finished job
     WRITTEN = 4,  -- a finished job which results has been written
+    FAILED = 5,   -- a job which achieves the maximum number of retries
   },
   TASK_STATUS = {
     WAIT     = "WAIT",
@@ -24,6 +43,8 @@ local utils = {
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
   },
+  MAX_WORKER_RETRIES   =     3,
+  MAX_JOB_RETRIES      =     3,
   MAX_PENDING_INSERTS  = 50000,
   MAX_IT_WO_CGARBAGE   =  5000,
   MAX_TIME_WO_CGARBAGE =    60, -- 1 minute
@@ -70,6 +91,7 @@ local function make_job(key, value)
     tmpname = utils.DEFAULT_TMPNAME,
     creation_time = time(),
     status = utils.STATUS.WAITING,
+    repetitions = 0,
   }
 end
 
@@ -297,6 +319,15 @@ local function rename(old,new)
   end
 end
 
+local function clear_table(t)
+  for k,_ in pairs(t) do t[k] = nil end
+end
+
+local function copy_table_ipairs(dst,src)
+  for i=#src+1,#dst do dst[i] = nil end
+  for i=1,#src do dst[i] = src[i] end
+end
+
 --------------------------------------------------------------------------------
 
 ----------------------------------------------------------------------------
@@ -355,6 +386,19 @@ utils.utest = function()
   local tmp1,tmp2 = os.tmpname(),os.tmpname()
   assert( rename(tmp1,tmp2) )
   assert( remove(tmp2) )
+  --
+  local t = { 1, 3, a=4, b=5 }
+  clear_table(t)
+  assert(not t[1] and not t[2] and not t.a and not t.b)
+  --
+  local src  = { 1, 2, 3, 4 }
+  local dst1 = { 5, 6, 7}
+  local dst2 = { 5, 6, 7, 8, 9, 10}
+  copy_table_ipairs(dst1,src)
+  copy_table_ipairs(dst2,src)
+  assert(#dst1 == #src)
+  assert(#dst2 == #src)
+  for i=1,#src do assert(dst1[i] == src[i] and dst2[i] == src[i]) end
 end
 
 --------------------------------------------------------------------------------
@@ -375,6 +419,8 @@ utils.merge_iterator = merge_iterator
 utils.get_storage_from = get_storage_from
 utils.rename = rename
 utils.remove = remove
+utils.clear_table = clear_table
+utils.copy_table_ipairs = copy_table_ipairs
 --
 utils.tojson = mongo.tojson
 

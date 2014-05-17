@@ -1,5 +1,29 @@
+--[[
+  This file is part of Lua-MapReduce
+  
+  Copyright 2014, Francisco Zamora-Martinez
+  
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License version 3 as
+  published by the Free Software Foundation
+  
+  This library is distributed in the hope that it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+  for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this library; if not, write to the Free Software Foundation,
+  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+]]
+
+-- The job class is used by workers to execute map/reduce job. This class allows
+-- to write job status and to update job statistics in MongoDB. Execution of
+-- user map/reduce/combiner modules is done in job class. Intermediate data is
+-- written here in the storage given at 'task' collection.
+
 local job = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "job",
 }
 
@@ -38,7 +62,7 @@ end
 -- function if needed, and returns the resulting function
 local initialized = {}
 local funcs = { }
-local function job_get_func(self, fname, func, args, declare_emit)
+local function job_get_func(self, fname, func, args)
   local f = funcs[fname]
   if not f then
     f = { m = require(fname) }
@@ -49,9 +73,11 @@ local function job_get_func(self, fname, func, args, declare_emit)
     assert(f.m[func]) -- sanity check
     funcs[fname] = f
   end
-  if declare_emit then
+  if func == "mapfn" then
     local MAX_MAP_RESULT = utils.MAX_MAP_RESULT
     local result = {}
+    local copy_table_ipairs = utils.copy_table_ipairs
+    local clear_table = utils.clear_table
     self.result  = result
     self.emit    = function(key,value)
       assert(tostring(key),
@@ -61,9 +87,26 @@ local function job_get_func(self, fname, func, args, declare_emit)
       local N      = #result[key]
       -- faster than table.insert
       result[key][ N+1 ] = value
-      if N > MAX_MAP_RESULT then 
-        result[key] = { self.combiner(key, result[key]) }
+      if self.combiner and N > MAX_MAP_RESULT then 
+        self.combiner(key, result[key],self.combiner_emit)
+        copy_table_ipairs(result[key], self.combiner_result)
+        clear_table(self.combiner_result)
       end
+    end
+  elseif func == "reducefn" then
+    self.result  = {}
+    self.emit    = function(value)
+      -- faster than table.insert
+      self.result[ #self.result+1 ] = value
+    end
+    self.associative_reducer = f.m.associative_reducer
+    self.commutative_reducer = f.m.commutative_reducer
+    self.idempotent_reducer  = f.m.idempotent_reducer
+  elseif func == "combinerfn" then
+    self.combiner_result = {}
+    self.combiner_emit = function(value)
+      -- faster than table.insert
+      self.combiner_result[ #self.combiner_result+1 ] = value
     end
   end
   return f.m[func]
@@ -111,7 +154,10 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
   local partitioner = cached( job_get_func(self, partitioner_fname,
                                            "partitionfn", init_args) )
   -- combiner, apply the reduce function before put result to database
-  local combiner = job_get_func(self, combiner_fname, "reducefn", init_args)
+  local combiner
+  if combiner_fname then
+    combiner = job_get_func(self, combiner_fname, "combinerfn", init_args)
+  end
   self.combiner = combiner
   local map_key,map_value = self:get_pair()
   -- this closure is the responsible for all the map job
@@ -126,7 +172,14 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local math_floor    = math.floor
     local serialize_table_ipairs = serialize_table_ipairs
     local clock1 = os.clock()
+    local combiner_emit = self.combiner_emit
+    local copy_table_ipairs = utils.copy_table_ipairs
+    local clear_table = utils.clear_table
+    --------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     g(map_key,map_value,self.emit) -- executes the MAP function, the result is
+    --------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- self.result the job is marked as finished, but not written
     job_mark_as_finished(self)
     --
@@ -139,8 +192,12 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local keys     = keys_sorted(result)
     local builders = {}
     for _,key in ipairs(keys) do
-      local value = result[key]
-      if #value > 1 then value = { combiner(key,value) } end
+      local values = result[key]
+      if #values > 1 then
+        combiner(key,values,combiner_emit)
+        copy_table_ipairs(values, self.combiner_result)
+        clear_table(self.combiner_result)
+      end
       local part_key  = partitioner(key)
       local part_key  = assert(tonumber(part_key),
                                "Partition key must be a number")
@@ -151,8 +208,8 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
       local builder       = builders[result_ns] or make_builder()
       builders[result_ns] = builder
       local key_str       = escape(key)
-      local value_str     = serialize_table_ipairs(value)
-      builder:append(string.format("return %s,%s\n", key_str, value_str))
+      local values_str    = serialize_table_ipairs(values)
+      builder:append(string.format("return %s,%s\n", key_str, values_str))
     end
     -- create all the files
     for result_ns,builder in pairs(builders) do
@@ -172,6 +229,11 @@ function job_prepare_reduce(self, g, storage, path)
   local key,value = self:get_pair()
   return function()
     -- take local variables
+    local copy_table_ipairs = utils.copy_table_ipairs
+    local clear_table   = utils.clear_table
+    local associative   = self.associative_reducer
+    local commutative   = self.commutative_reducer
+    local idempotent    = self.idempotent_reducer
     local assert        = assert
     local string_format = string.format
     local escape        = escape
@@ -192,21 +254,34 @@ function job_prepare_reduce(self, g, storage, path)
     local match_str = string.format("^%s.*", job_file)
     local list = fs:list({ filename = { ["$regex"] = match_str } })
     for v in list:results() do
-      -- sanity check
-      assert(v.filename:match(match_str))
       table.insert(filenames, v.filename)
     end
+    --------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     -- iterate over a merge of all the input filenames
-    for k,v in merge_iterator(fs, filenames, make_lines_iterator) do
-      if #v > 1 then
-        v = g(k,v) -- executes the REDUCE function
-      else
-        v = v[1]
+    if associative and commutative and idempotent then
+      for k,v in merge_iterator(fs, filenames, make_lines_iterator) do
+        if #v > 1 then
+          g(k,v,self.emit) -- executes the REDUCE function
+          copy_table_ipairs(v, self.result)
+          clear_table(self.result)
+        end
+        -- write the result to mongo
+        builder:append(string_format("return %s,%s\n", escape(k),
+                                     serialize_table_ipairs(v)))
       end
-      assert(v, "Reduce must return a value")
-      -- write the result to mongo
-      builder:append(string_format("return %s,%s\n", escape(k), escape(v)))
+    else
+      for k,v in merge_iterator(fs, filenames, make_lines_iterator) do
+        g(k,v,self.emit) -- executes the REDUCE function
+        copy_table_ipairs(v, self.result)
+        clear_table(self.result)
+        -- write the result to mongo
+        builder:append(string_format("return %s,%s\n", escape(k),
+                                     serialize_table_ipairs(v)))
+      end
     end
+    --------------------------------------------------------------------------
+    --------------------------------------------------------------------------
     assert( builder:build(res_file) )
     local clock2 = os.clock()
     local elapsed_time = clock2-clock1
@@ -254,6 +329,9 @@ function job:mark_as_broken()
                         ["$set"] = {
                           status = STATUS.BROKEN,
                           broken_time = utils.time(),
+                        },
+                        ["$inc"] = {
+                          repetitions = 1,
                         },
                       },
                       false,

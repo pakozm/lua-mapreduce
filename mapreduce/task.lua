@@ -1,7 +1,64 @@
--- sets the task job for the cluster, which indicates the workers which kind of
--- work (MAP,REDUCE,...) must perform
+--[[
+  This file is part of Lua-MapReduce
+  
+  Copyright 2014, Francisco Zamora-Martinez
+  
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License version 3 as
+  published by the Free Software Foundation
+  
+  This library is distributed in the hope that it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+  for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this library; if not, write to the Free Software Foundation,
+  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+]]
+
+-- Task class sets the task job for the server, which indicates the workers
+-- which kind of work (MAP,REDUCE,...) must perform. Workers use task objects to
+-- take a job from Mongo database, and to configure the job parameters. The task
+-- is related with 'task' collection in MongoDB. This collection is a singleton
+-- with data necessary to describe the MapReduce task. The following is an
+-- example of the 'task' collection after the execution of wordcount example:
+
+--[[
+> db.task.find().pretty()
+{
+	"_id" : "unique",
+	"init_args" : {
+		"-1" : "lua",
+		"0" : "execute_server.lua"
+	},
+	"status" : "FINISHED",
+	"storage" : "gridfs:/tmp/lua_sQHr2G",
+	"iteration" : 1,
+	"mapfn" : "examples.WordCount.mapfn",
+	"partitionfn" : "examples.WordCount.partitionfn",
+	"reducefn" : "examples.WordCount.reducefn",
+	"combinerfn" : "examples.WordCount.reducefn",
+	"finished_time" : 1400225799.669539,
+	"started_time" : 1400225797.659308,
+	"stats" : {
+  		"map_sum_cpu_time" : 0.039485000000000006,
+		"map_sum_real_time" : 0.07356524467468262,
+		"map_real_time" : 0.08571505546569824,
+		"red_sum_cpu_time" : 0.05029200000000001,
+		"red_sum_real_time" : 0.0801548957824707,
+		"red_real_time" : 0.12635302543640137,
+		"sum_sys_time" : 0.0639431404571533,
+		"total_sum_cpu_time" : 0.08977700000000002,
+		"total_sum_real_time" : 0.15372014045715332
+		"total_real_time" : 0.2120680809020996,
+		"iteration_time" : 2.0102310180664062,
+	}
+}
+]]
+
 local task = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "task",
 }
 
@@ -44,6 +101,7 @@ function task:create_collection(task_status, params, iteration)
                         mapfn          = params.mapfn,
                         reducefn       = params.reducefn,
                         partitionfn    = params.partitionfn,
+                        combinerfn     = params.combinerfn,
                         init_args      = params.init_args,
                         --
                         storage        = params.storage,

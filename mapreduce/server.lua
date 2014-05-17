@@ -1,5 +1,107 @@
+--[[
+  This file is part of Lua-MapReduce
+  
+  Copyright 2014, Francisco Zamora-Martinez
+  
+  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License version 3 as
+  published by the Free Software Foundation
+  
+  This library is distributed in the hope that it will be useful, but WITHOUT
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+  for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this library; if not, write to the Free Software Foundation,
+  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+]]
+
+-- The server is one of the most important classes, together with job
+-- class. Server allows to configure a (iterative) MapReduce task. It configures
+-- 'map_jobs' and 'red_jobs' collections, where workers look to run jobs. The
+-- programmer needs to execute server:configure(...) method in order to setup
+-- the MapReduce task you want to execute. server:loop() method executes the
+-- task and take note of statistics which will be written using a task object.
+
+--[[ Example of map_jobs collection for wordcount
+> db.map_jobs.find().limit(2).pretty()
+{
+	"_id" : "1",
+	"value" : "mapreduce/server.lua",
+	"creation_time" : 1400225797.659415,
+	"started_time" : 1400225798.321171,
+	"finished_time" : 1400225798.328765,
+	"written_time" : 1400225798.346263,
+	"cpu_time" : 0.017617999999999998,
+	"real_time" : 0.022084951400756836,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+{
+	"_id" : "2",
+	"value" : "mapreduce/worker.lua",
+	"creation_time" : 1400225797.659444,
+	"started_time" : 1400225798.346911,
+	"finished_time" : 1400225798.350307,
+	"written_time" : 1400225798.358262,
+	"cpu_time" : 0.005623000000000003,
+	"real_time" : 0.008959054946899414,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+]]
+
+--[[ Example of red_jobs collection for wordcount
+> db.red_jobs.find().limit(2).pretty()
+{
+	"_id" : "1",
+	"value" : {
+		"result" : "result.P1",
+		"mappers" : [
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME"
+		],
+		"file" : "/tmp/lua_sQHr2G/map_results.P1"
+	},
+	"creation_time" : 1400225798.665791,
+	"started_time" : 1400225799.41176,
+	"written_time" : 1400225799.423528,
+	"cpu_time" : 0.006439999999999994,
+	"real_time" : 0.008752822875976562,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME",
+}
+{
+	"_id" : "2",
+	"value" : {
+		"result" : "result.P2",
+		"mappers" : [
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME",
+			"HOSTNAME"
+		],
+		"file" : "/tmp/lua_sQHr2G/map_results.P2"
+	},
+	"creation_time" : 1400225798.665803,
+	"started_time" : 1400225799.426011,
+	"written_time" : 1400225799.435997,
+	"cpu_time" : 0.004669999999999994,
+	"real_time" : 0.006902933120727539,
+	"status" : 4,
+	"tmpname" : "lua_QcozTk",
+	"worker" : "HOSTNAME"
+}
+]]
+
 local server = {
-  _VERSION = "0.2",
+  _VERSION = "0.3",
   _NAME = "mapreduce.server",
 }
 
@@ -8,6 +110,7 @@ local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
 local fs     = require "mapreduce.fs"
 
+local MAX_JOB_RETRIES = utils.MAX_JOB_RETRIES
 local DEFAULT_HOSTNAME = utils.DEFAULT_HOSTNAME
 local DEFAULT_IP = utils.DEFAULT_IP
 local DEFAULT_DATE = utils.DEFAULT_DATE
@@ -70,7 +173,28 @@ local function make_task_coroutine_wrap(self,ns)
   return coroutine.wrap(function()
                           repeat
                             local db = self.cnn:connect()
-                            local M = db:count(ns, { status = STATUS.WRITTEN })
+                            -- remove broken jobs with >= MAX_JOB_RETRIES
+                            -- FIXME: check the write concern
+                            assert( db:update(ns,
+                                              {
+                                                status = STATUS.BROKEN,
+                                                repetitions = {
+                                                  ["$gte"] = MAX_JOB_RETRIES
+                                                },
+                                              },
+                                              {
+                                                ["$set"] = { status = STATUS.FAILED },
+                                              },
+                                              false,   -- no create a new document if not exists
+                                              true) )  -- update all the matches
+                            -- count written or failed jobs
+                            local M = db:count(ns,
+                                               {
+                                                 ["$or"] = {
+                                                   { status = STATUS.WRITTEN },
+                                                   { status = STATUS.FAILED },
+                                                 }
+                                               })
                             if M then
                               io.stderr:write(string.format("\r\t %6.1f %% ",
                                                             M/N*100))
@@ -93,13 +217,14 @@ local function make_task_coroutine_wrap(self,ns)
                         end)
 end
 
--- removes all the tasks which are not WRITTEN
+-- removes all the tasks which are not WRITTEN and not FAILED
 local function remove_pending_tasks(db,ns)
   return db:remove(ns,
                    { ["$or"] = { { status = STATUS.BROKEN,  },
                                  { status = STATUS.WAITING  },
                                  { status = STATUS.FINISHED },
-                                 { status = STATUS.RUNNING  }, } },
+                                 { status = STATUS.RUNNING  }, },
+                   },
                    false)
 end
 
@@ -111,23 +236,25 @@ local function server_prepare_map(self)
   local map_jobs_ns = self.task:get_map_jobs_ns()
   remove_pending_tasks(db, map_jobs_ns)
   -- create map tasks in mongo database
-  local f = self.taskfn.taskfn
   local keys_check = {}
-  for key,value in coroutine.wrap(f) do
-    count = count + 1
-    assert(tostring(key), "taskfn must return a convertible to string key")
-    assert(not keys_check[key], string.format("Duplicate key: %s", key))
-    keys_check[key] = true
-    local tvalue = type(value)
-    if tvalue == "table" then
-      local json_value = utils.tojson(value)
-      assert(#json_value <= utils.MAX_TASKFN_VALUE_SIZE,
-             "Exceeded maximum taskfn value size")
-    end
-    -- FIXME: check how to process task keys which are defined by a previously
-    -- broken execution and didn't belong to the current task execution
-    assert( db:insert(map_jobs_ns, make_job(key,value)) )
-  end
+  self.taskfn.taskfn(function(key,value)
+                       count = count + 1
+                       assert(tostring(key),
+                              "taskfn must return a convertible to string key")
+                       assert(not keys_check[key],
+                              string.format("Duplicate key: %s", key))
+                       keys_check[key] = true
+                       local tvalue = type(value)
+                       if tvalue == "table" then
+                         local json_value = utils.tojson(value)
+                         assert(#json_value <= utils.MAX_TASKFN_VALUE_SIZE,
+                                "Exceeded maximum taskfn value size")
+                       end
+                       -- FIXME: check how to process task keys which are
+                       -- defined by a previously broken execution and didn't
+                       -- belong to the current task execution
+                       assert( db:insert(map_jobs_ns, make_job(key,value)) )
+                     end)
   self.task:set_task_status(TASK_STATUS.MAP)
   -- this coroutine WAITS UNTIL ALL MAPS ARE DONE
   return make_task_coroutine_wrap(self, map_jobs_ns),count
@@ -278,14 +405,14 @@ function server_methods:configure(params)
   self.configuration_params = params
   self.init_args            = params.init_args
   local dbname = self.dbname
-  local taskfn,mapfn,reducefn,finalfn
   local scripts = {}
   self.result_ns = params.result_ns or "result"
   assert(params.taskfn and params.mapfn and params.partitionfn and params.reducefn,
          "Fields taskfn, mapfn, partitionfn and reducefn are mandatory")
-  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn" } do
+  for _,name in ipairs{ "taskfn", "mapfn", "partitionfn", "reducefn", "finalfn",
+                      "combinerfn" } do
     assert( (params[name] and type(params[name]) == "string") or
-            (not params[name] and name=="finalfn"),
+              (not params[name] and (name=="finalfn" or name == "combinerfn") ),
            string.format("Needs a %s module with %s function", name, name))
     if params[name] then
       local aux = require(params[name])
@@ -293,8 +420,8 @@ function server_methods:configure(params)
              string.format("Module %s must return a table",
                            name))
       assert(aux[name],
-             string.format("Module %s must return a table with the field func",
-                           name))
+             string.format("Module %s must return a table with the field %s",
+                           name, name))
       assert(aux.init, string.format("Init function is needed: %s", name))
       scripts[name] = params[name]
     end
@@ -429,6 +556,13 @@ function server_methods:loop()
     io.stderr:write(string.format("# Cluster time            %f\n",
                                   map_real_time + red_real_time))
     --
+    local num_failed_maps = db:count(self.task:get_map_jobs_ns(),
+                                     { status = STATUS.FAILED })
+    local num_failed_reds = db:count(self.task:get_red_jobs_ns(),
+                                     { status = STATUS.FAILED })
+    io.stderr:write(string.format("# Failed maps     %d\n", num_failed_maps))
+    io.stderr:write(string.format("# Failed reduces  %d\n", num_failed_reds))
+    --
     self.task:insert{
       stats = {
         map_sum_cpu_time = map_sum_cpu_time,
@@ -443,6 +577,8 @@ function server_methods:loop()
         red_real_time = red_real_time,
         total_real_time = map_real_time + red_real_time,
         iteration_time = total_time,
+        failed_map_jobs = num_failed_maps,
+        failed_red_jobs = num_failed_reds,
       }
     }
     --
