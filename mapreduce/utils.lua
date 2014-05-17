@@ -328,6 +328,22 @@ local function copy_table_ipairs(dst,src)
   for i=1,#src do dst[i] = src[i] end
 end
 
+-- checks that value is JSON compatible
+local function assert_check(value)
+  local tt = type(value)
+  if tt == "table" then
+    for k,v in pairs(value) do
+      check(k,v)
+    end
+  elseif tt == "function" then
+    error("Impossible to assign a function in a JSON table")
+  elseif tt == "userdata" then
+    error("Impossible to assign a userdata in a JSON table")
+  elseif tt == "thread" then
+    error("Impossible to assign a thread in a JSON table")
+  end
+end
+
 --------------------------------------------------------------------------------
 
 ----------------------------------------------------------------------------
@@ -421,6 +437,7 @@ utils.rename = rename
 utils.remove = remove
 utils.clear_table = clear_table
 utils.copy_table_ipairs = copy_table_ipairs
+utils.assert_check = assert_check
 --
 utils.tojson = mongo.tojson
 

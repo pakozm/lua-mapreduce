@@ -23,6 +23,7 @@ local job    = require "mapreduce.job"
 local task   = require "mapreduce.task"
 local server = require "mapreduce.server"
 local worker = require "mapreduce.worker"
+local persistent_table = require "mapreduce.persistent_table"
 
 utils.utest()
 cnn.utest()
@@ -31,5 +32,6 @@ job.utest()
 task.utest()
 server.utest()
 worker.utest()
+persistent_table.utest()
 
 print("Ok")
