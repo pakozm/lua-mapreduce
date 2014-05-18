@@ -19,13 +19,15 @@
 local worker = require "mapreduce.worker"
 local server = require "mapreduce.server"
 local utils  = require "mapreduce.utils"
+local persistent_table = require "mapreduce.persistent_table"
 
 local mapreduce = {
-  _VERSION = "0.3.1",
+  _VERSION = "0.3.2",
   _NAME    = "mapreduce",
   worker   = worker,
   server   = server,
   utils    = utils,
+  persistent_table= persistent_table,
 }
 
 -- integrity test
