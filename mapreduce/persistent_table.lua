@@ -47,13 +47,15 @@ function methods:update()
     -- FIXME: between find_one and insert could occur a race condition :S
     assert( db:insert(self.singleton_ns, content) )
   else
+    local prev_timestamp = content.timestamp
     local merged_content = {}
     content.timestamp = utils.time()
     remote_content.timestamp = content.timestamp
     for key,value in pairs(content) do merged_content[key] = value end
     for key,value in pairs(remote_content) do
       if merged_content[key] then
-        assert(merged_content[key] == value,
+        assert(merged_content[key] == value and
+                 math.abs(remote_content.timestamp-prev_timestamp)>0.001,
                "Inconsistent data update retrieved from MongoDB")
       else
         merged_content[key] = value
