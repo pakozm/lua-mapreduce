@@ -69,6 +69,8 @@ local init = function(arg)
   if not conf.train_func or conf.finished then
     if conf.finished then
       conf:drop()
+      local list = gridfs:list()
+      for r in list:results() do gridfs:remove_file(r.filename) end
       conf.finished = false
     end
     -- store current iteration and best model in a GridFS file (tmpname)
