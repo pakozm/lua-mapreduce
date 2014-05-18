@@ -44,29 +44,27 @@ function methods:update()
   local remote_content = db:find_one(self.singleton_ns,
                                      { _id = content._id })
   if not remote_content then
+    rawset(content,"timestamp",0)
+    content.finished  = false
     -- FIXME: between find_one and insert could occur a race condition :S
     assert( db:insert(self.singleton_ns, content) )
   else
-    local prev_timestamp = content.timestamp
+    if dirty then assert(content.timestamp == remote_content.timestamp) end
     local merged_content = {}
-    content.timestamp = utils.time()
-    remote_content.timestamp = content.timestamp
     for key,value in pairs(content) do merged_content[key] = value end
     for key,value in pairs(remote_content) do
-      if merged_content[key] then
-        assert(merged_content[key] == value and
-                 math.abs(remote_content.timestamp-prev_timestamp)>0.001,
-               "Inconsistent data update retrieved from MongoDB")
-      else
+      if not merged_content[key] then
         merged_content[key] = value
         rawset(self.content,key,value)
       end
     end
     if dirty then
+      merged_content.timestamp = assert(merged_content.timestamp) + 1
       assert( db:update(self.singleton_ns,
                         { _id = merged_content._id },
                         merged_content,
                         true, false) )
+      rawset(content,"timestamp",merged_content.timestamp)
     end
   end
   self.dirty = false
@@ -105,9 +103,9 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
   local obj = {
     cnn     = cnn(cnn_string, dbname, auth_table),
     name    = name,
-    dirty   = true,
+    dirty   = false,
     singleton_ns = dbname .. ".singletons",
-    content = { _id = name, timestamp = utils.time() },
+    content = { _id = name },
   }
   -- visible_table has been prepared to capture obj table as closure of its
   -- metatable, allowing to implement data encapsulation design pattern in Lua
@@ -129,6 +127,7 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
                    local_set(self,{ [key]=value })
                  end
                })
+  visible_table:update()
   return visible_table
 end
 setmetatable(persistent_table, persistent_table)

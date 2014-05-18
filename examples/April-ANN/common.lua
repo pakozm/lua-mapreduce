@@ -179,6 +179,7 @@ local finalfn = function(pairs_iterator)
     user_final(train_func)
     return "loop"
   else
+    conf:update()
     conf.finished = true
     conf:update()
     return true
