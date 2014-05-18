@@ -5,11 +5,11 @@ local dbname            = "mr_exp_digits"
 
 local s = mapreduce.server.new(connection_string, dbname)
 s:configure{
-  taskfn         = "examples.April-ANN",
-  mapfn          = "examples.April-ANN",
-  partitionfn    = "examples.April-ANN",
-  reducefn       = "examples.April-ANN",
-  finalfn        = "examples.April-ANN",
+  taskfn         = "mapreduce.examples.April-ANN",
+  mapfn          = "mapreduce.examples.April-ANN",
+  partitionfn    = "mapreduce.examples.April-ANN",
+  reducefn       = "mapreduce.examples.April-ANN",
+  finalfn        = "mapreduce.examples.April-ANN",
   init_args      = arg,
   storage        = "gridfs",
 }

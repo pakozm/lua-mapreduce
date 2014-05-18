@@ -20,11 +20,11 @@ for storage in gridfs shared sshfs; do
     ## NO COMBINER + ASSOCIATIVE COMMUTATIVE IDEMPOTENT REDUCER
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
-        examples.WordCount.taskfn \
-        examples.WordCount.mapfn \
-        examples.WordCount.partitionfn \
-        examples.WordCount.reducefn \
-        examples.WordCount.finalfn \
+        mapreduce.examples.WordCount.taskfn \
+        mapreduce.examples.WordCount.mapfn \
+        mapreduce.examples.WordCount.partitionfn \
+        mapreduce.examples.WordCount.reducefn \
+        mapreduce.examples.WordCount.finalfn \
         nil $storage | awk '{ print $1,$2 }' | sort) \
         <(cat mapreduce/server.lua \
         mapreduce/worker.lua \
@@ -37,11 +37,11 @@ for storage in gridfs shared sshfs; do
     ## NO COMBINER + GENERAL REDUCER
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
-        examples.WordCount.taskfn \
-        examples.WordCount.mapfn \
-        examples.WordCount.partitionfn \
-        examples.WordCount.reducefn2 \
-        examples.WordCount.finalfn \
+        mapreduce.examples.WordCount.taskfn \
+        mapreduce.examples.WordCount.mapfn \
+        mapreduce.examples.WordCount.partitionfn \
+        mapreduce.examples.WordCount.reducefn2 \
+        mapreduce.examples.WordCount.finalfn \
         nil $storage | awk '{ print $1,$2 }' | sort) \
         <(cat mapreduce/server.lua \
         mapreduce/worker.lua \
@@ -54,12 +54,12 @@ for storage in gridfs shared sshfs; do
     ## INIT SCRIPT
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
-        examples.WordCount \
-        examples.WordCount \
-        examples.WordCount \
-        examples.WordCount \
-        examples.WordCount \
-        examples.WordCount \
+        mapreduce.examples.WordCount \
+        mapreduce.examples.WordCount \
+        mapreduce.examples.WordCount \
+        mapreduce.examples.WordCount \
+        mapreduce.examples.WordCount \
+        mapreduce.examples.WordCount \
         $storage | awk '{ print $1,$2 }' | sort) \
         <(cat mapreduce/server.lua \
         mapreduce/worker.lua \

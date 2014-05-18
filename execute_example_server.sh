@@ -1,8 +1,8 @@
 #!/bin/bash
 lua execute_server.lua localhost wordcount \
-    examples.WordCount.taskfn \
-    examples.WordCount.mapfn \
-    examples.WordCount.partitionfn \
-    examples.WordCount.reducefn \
-    examples.WordCount.finalfn \
-    examples.WordCount.reducefn $@
+    mapreduce.examples.WordCount.taskfn \
+    mapreduce.examples.WordCount.mapfn \
+    mapreduce.examples.WordCount.partitionfn \
+    mapreduce.examples.WordCount.reducefn \
+    mapreduce.examples.WordCount.finalfn \
+    mapreduce.examples.WordCount.reducefn $@

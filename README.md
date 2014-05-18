@@ -18,9 +18,8 @@ Installation
 ------------
 
 Copy the `mapreduce` directory to a place visible from your `LUA_PATH`
-environment variable. In the same way, in order to test the example, you need to
-put the `examples` directory visible through your `LUA_PATH`. It is possible to
-add the active directory by writing in the terminal:
+environment variable. It is possible to add the active directory by writing in
+the terminal:
 
 ```
 $ export LUA_PATH='?.lua;?/init.lua'

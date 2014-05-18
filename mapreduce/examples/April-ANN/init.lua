@@ -19,7 +19,7 @@ local weight_decay   = 1e-04
 local max_epochs     = 40
 local min_epochs     = 20
 
-local common = require "examples.April-ANN.common"
+local common = require "mapreduce.examples.April-ANN.common"
 local cached = common.cached
 --
 local mat_cache = {}
