@@ -256,4 +256,6 @@ end
 return {
   make_map_reduce_task_table = make_map_reduce_task_table,
   cached = cached,
+  serialize_to_gridfs = serialize_to_gridfs,
+  deserialize_from_gridfs = deserialize_from_gridfs,
 }
