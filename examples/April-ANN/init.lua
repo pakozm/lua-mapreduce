@@ -147,10 +147,12 @@ local compute_validation_loss = function(trainer, conf)
   local ds_tbl = cached(value, make_load_dataset(mat),  ds_cache)
   local in_ds  = ds_tbl.val_input
   local out_ds = ds_tbl.val_output
-  return trainer:validate_dataset{
+  local va_loss_mean,va_loss_var = trainer:validate_dataset{
     input_dataset  = in_ds,
     output_dataset = out_ds,
   }
+  util.omp_set_num_threads(1)
+  return va_loss_mean,va_loss_var
 end
 
 -- the last argument is the persistent table (allows read/write operations)
