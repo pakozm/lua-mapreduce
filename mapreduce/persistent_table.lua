@@ -37,15 +37,15 @@ local methods = {}
 -- between this object and database, an assert will be thrown
 function methods:update()
   local self    = getmetatable(self).obj
-  local cnn     = rawget(self,"cnn")
-  local dirty   = rawget(self,"dirty")
-  local content = rawget(self,"content")
+  local cnn     = self.cnn
+  local dirty   = self.dirty
+  local content = self.content
   local db      = cnn:connect()
-  local remote_content = db:find_one(self.singleton_dbname,
+  local remote_content = db:find_one(self.singleton_ns,
                                      { _id = content._id })
   if not remote_content then
     -- FIXME: between find_one and insert could occur a race condition :S
-    db:insert(self.singleton_dbname, content)
+    assert( db:insert(self.singleton_ns, content) )
   else
     local merged_content = {}
     content.timestamp = utils.time()
@@ -60,18 +60,21 @@ function methods:update()
         rawset(self.content,key,value)
       end
     end
-    db:update(self.singleton_dbname,
-              { _id = content._id },
-              { ["$set"] = merged_content })
+    if dirty then
+      assert( db:update(self.singleton_ns,
+                        { _id = merged_content._id },
+                        merged_content,
+                        true, false) )
+    end
   end
-  rawset(self,"dirty",false)
+  self.dirty = false
 end
 
 -- removes the collection at the database, allowing to start from zero
 function methods:drop()
   local self = getmetatable(self).obj
   local db = self.cnn:connect()
-  db:drop_collection(self.singleton_dbname)
+  db:drop_collection(self.singleton_ns)
 end
 
 local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true }
@@ -101,7 +104,7 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
     cnn     = cnn(cnn_string, dbname, auth_table),
     name    = name,
     dirty   = true,
-    singleton_dbname = dbname .. ".singletons",
+    singleton_ns = dbname .. ".singletons",
     content = { _id = name, timestamp = utils.time() },
   }
   -- visible_table has been prepared to capture obj table as closure of its
@@ -141,7 +144,5 @@ persistent_table.utest = function()
 end
 
 ------------------------------------------------------------------------------
-
-persistent_table.utest()
 
 return persistent_table

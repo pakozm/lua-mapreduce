@@ -519,11 +519,6 @@ function server_methods:loop()
     local end_time = utils.time()
     local total_time = end_time - start_time
     self.task:insert_finished_time(end_time)
-    -- FINAL EXECUTION
-    io.stderr:write("# \t Final execution\n")
-    collectgarbage("collect")
-    server_final(self)
-    --
     -- STATISTICS
     local map_sum_cpu_time = compute_sum(db, self.task:get_map_jobs_ns(),
                                          "cpu_time")
@@ -581,8 +576,12 @@ function server_methods:loop()
         failed_red_jobs = num_failed_reds,
       }
     }
-    --
     io.stderr:write(string.format("# Server time %f\n", total_time))
+    -- FINAL EXECUTION
+    io.stderr:write("# \t Final execution\n")
+    collectgarbage("collect")
+    server_final(self)
+    --
   until self.finished
   local storage,path = self.configuration_params.storage:match("([^:]+):(/.*)")
   if storage == "shared" then utils.remove(path) end
