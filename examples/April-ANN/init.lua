@@ -55,11 +55,14 @@ local generate_new_trainer_and_train_func = function()
 end
 
 -- the first init is executed is at MapReduce server instance when it is
--- configured
-local user_init = function(arg)
+-- configured; this function receives the arguments list given to server
+-- configure method, and a persistent table where it is possible to store
+-- persistent data which could be retrieved from map/reduce functions
+local user_init = function(arg,conf)
 end
 
-local taskfn = function(emit)
+-- receives the emit function and the persistent table in read-only mode
+local user_taskfn = function(emit,conf)
   emit(1,"misc/digits.png")
   emit(2,"misc/digits.png")
   emit(3,"misc/digits.png")
@@ -119,7 +122,8 @@ local make_load_dataset = function(mat)
   end
 end
 
-local compute_gradients_and_loss = function(trainer, key, value)
+-- receives the persistent table in read-only mode as last argument
+local compute_gradients_and_loss = function(trainer, key, value, conf)
   local mat    = cached(value, make_load_matrix(value), mat_cache)
   local ds_tbl = cached(value, make_load_dataset(mat),  ds_cache)
   local in_ds  = ds_tbl.train_input
@@ -135,7 +139,8 @@ local compute_gradients_and_loss = function(trainer, key, value)
   return grads,tr_loss_matrix
 end
 
-local compute_validation_loss = function(trainer)
+-- receives the persistent table in read-only mode as last argument
+local compute_validation_loss = function(trainer, conf)
   util.omp_set_num_threads(4)
   local value  = "misc/digits.png"
   local mat    = cached(value, make_load_matrix(value), mat_cache)
@@ -148,7 +153,8 @@ local compute_validation_loss = function(trainer)
   }
 end
 
-local user_final = function(train_func)
+-- the last argument is the persistent table (allows read/write operations)
+local user_finalfn = function(train_func, conf)
   print(train_func:get_state_string())
   train_func:save("best_func.lua")
 end
@@ -160,8 +166,8 @@ return common.make_map_reduce_task_table {
   dbname       = EXP_DBNAME,
   dbhost       = EXP_DBHOST,
   user_init    = user_init,
-  taskfn       = taskfn,
-  user_final   = user_final,
+  user_taskfn  = user_taskfn,
+  user_finalfn = user_finalfn,
   generate_new_trainer_and_train_func = generate_new_trainer_and_train_func,
   compute_gradients_and_loss = compute_gradients_and_loss,
   compute_validation_loss    = compute_validation_loss,

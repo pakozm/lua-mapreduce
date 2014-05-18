@@ -77,10 +77,13 @@ function methods:drop()
   db:drop_collection(self.singleton_ns)
 end
 
-local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true }
+local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true,
+                   read_only = true, dirty = true }
 -- sets a collection of pairs key,value from the given table
 function methods:set(tbl)
   local self = getmetatable(self).obj
+  assert(not self.read_only,
+         "Unable to write in a read_only persistent table")
   for key,value in pairs(tbl) do
     utils.assert_check(value)
     if reserved[key] then
@@ -91,6 +94,16 @@ function methods:set(tbl)
   self.dirty=true
 end
 local local_set = methods.set
+
+function methods:read_only(v)
+  local self = getmetatable(self).obj
+  self.read_only = v
+end
+
+function methods:dirty()
+  local self = getmetatable(self).obj
+  return self.dirty
+end
 
 ------------------------------------------------------------------------------
 
@@ -104,6 +117,7 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
     cnn     = cnn(cnn_string, dbname, auth_table),
     name    = name,
     dirty   = false,
+    read_only = false,
     singleton_ns = dbname .. ".singletons",
     content = { _id = name },
   }

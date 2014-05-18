@@ -12,8 +12,8 @@ local NUM_REDUCERS
 
 local dbname,dbhost
 local db,gridfs,conf,params
-local user_init,generate_new_trainer,compute_gradients_and_loss
-local compute_validation_loss,user_final
+local user_init,user_taskfn,user_finalfn
+local generate_new_trainer,compute_gradients_and_loss,compute_validation_loss
 
 -----------------------------------------------------------------------------
 
@@ -80,14 +80,25 @@ local init = function(arg)
     serialize_to_gridfs(gridfs, conf.train_func, train_func)
     conf:update()
   end
-  user_init(arg)
+  user_init(arg, conf)
+  if conf:dirty() then conf:update() end
+end
+
+local taskfn = function(emit)
+  conf:update()
+  user_taskfn(emit,conf)
+  if conf:dirty() then conf:update() end
 end
 
 local mapfn = function(key, value, emit)
   conf:update()
   local train_func = deserialize_from_gridfs(gridfs, assert(conf.train_func))
   local trainer = train_func:get_state_table().last
-  local weight_grads,loss_matrix = compute_gradients_and_loss(trainer,key,value)
+  conf:read_only(true)
+  local weight_grads,loss_matrix = compute_gradients_and_loss(trainer,
+                                                              key, value,
+                                                              conf)
+  conf:read_only(false)
   for name,grads in pairs(weight_grads) do
     serialize_and_map_emit(name,
                            { grads, trainer:weights(name):get_shared_count() },
@@ -103,7 +114,6 @@ end
 
 local loss
 local reducefn = function(key, values, emit)
-  conf:update()
   if not loss then
     local train_func = deserialize_from_gridfs(gridfs, assert(conf.train_func))
     local trainer    = train_func:get_state_table().last
@@ -161,6 +171,7 @@ local finalfn = function(pairs_iterator)
   end
   assert(tr_loss_mean)
   --
+  conf:read_only(true)
   local non_stop =
     train_func:execute(function()
                          optimizer:execute(function(it)
@@ -170,16 +181,17 @@ local finalfn = function(pairs_iterator)
                                            end,
                                            trainer:get_weights_table())
                          local va_loss_mean,va_loss_var =
-                           compute_validation_loss(trainer)
+                           compute_validation_loss(trainer, conf)
                          return trainer, tr_loss_mean, va_loss_mean
                        end)
+  conf:read_only(false)
   serialize_to_gridfs(gridfs, assert(conf.train_func), train_func)
   --
   if non_stop then
-    user_final(train_func)
+    user_finalfn(train_func, conf)
+    if conf:dirty() then conf:update() end
     return "loop"
   else
-    conf:update()
     conf.finished = true
     conf:update()
     return true
@@ -191,14 +203,14 @@ end
 local make_map_reduce_task_table = function(t)
   params = get_table_fields(
     {
-      num_reducers            = { mandatory = true, type_match="number" },
-      dbname                  = { mandatory = true, type_match="string" },
-      dbhost                  = { mandatory = true, type_match="string" },
-      user_init               = { mandatory = true, type_match="function" },
-      taskfn                  = { mandatory = true, type_match="function" },
+      num_reducers               = { mandatory = true, type_match="number" },
+      dbname                     = { mandatory = true, type_match="string" },
+      dbhost                     = { mandatory = true, type_match="string" },
       compute_gradients_and_loss = { mandatory = true, type_match="function" },
       compute_validation_loss    = { mandatory = true, type_match="function" },
-      user_final                 = { mandatory = true, type_match="function" },
+      user_init                  = { mandatory = true, type_match="function" },
+      user_taskfn                = { mandatory = true, type_match="function" },
+      user_finalfn               = { mandatory = true, type_match="function" },
       generate_new_trainer_and_train_func = { mandatory = true, type_match="function" },
     }, t)
   --
@@ -209,16 +221,17 @@ local make_map_reduce_task_table = function(t)
   -- persistent table allows to store data which will be accessed in a
   -- distributed way
   conf      = ptable("conf", dbhost, dbname)
-  user_init = params.user_init
   compute_gradients_and_loss = params.compute_gradients_and_loss
   compute_validation_loss    = params.compute_validation_loss
   generate_new_trainer_and_train_func = params.generate_new_trainer_and_train_func
-  user_final   = params.user_final
+  user_init    = params.user_init
+  user_taskfn  = params.user_taskfn
+  user_finalfn = params.user_finalfn
   NUM_REDUCERS = params.num_reducers
   return {
     init        = init,
     --
-    taskfn      = params.taskfn,
+    taskfn      = taskfn,
     mapfn       = mapfn,
     partitionfn = partitionfn,
     reducefn    = reducefn,
