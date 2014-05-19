@@ -22,7 +22,7 @@
 -- several data configuration through several distributed processes.
 
 local persistent_table = {
-  _VERSION = "0.1",
+  _VERSION = "0.2",
   _NAME = "mapreduce.persistent_table",
 }
 
@@ -78,7 +78,7 @@ function methods:drop()
 end
 
 local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true,
-                   read_only = true, dirty = true }
+                   read_only=true, dirty=true, finished=true }
 -- sets a collection of pairs key,value from the given table
 function methods:set(tbl)
   local self = getmetatable(self).obj
@@ -133,13 +133,23 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
                    if methods[key] then
                      return methods[key]
                    else
-                     return rawget(obj.content,key)
+                     return obj.content[key]
                    end
                  end,
                  -- sets the value of a key,value pair
                  __newindex = function(self,key,value)
                    local_set(self,{ [key]=value })
-                 end
+                 end,
+                 -- shows a JSON string
+                 __tostring = function(self)
+                   -- copy to aux all the content fields except the reserved
+                   -- fields
+                   local aux = {}
+                   for k,v in pairs(obj.content) do
+                     if not reserved[k] then aux[k] = v end
+                   end
+                   return utils.tojson(aux)
+                 end,
                })
   visible_table:update()
   return visible_table
