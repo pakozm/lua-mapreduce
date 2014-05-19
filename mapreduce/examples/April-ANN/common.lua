@@ -133,7 +133,7 @@ local reducefn = function(key, values, emit)
     end
     serialize_and_red_emit({ loss:get_accum_loss() }, emit)
   else
-    -- accumulate here the shared count
+    -- accumulate gradients and shared count
     local t = deserialize_emitted_value(values[1])
     local gradient = t[1]
     local counts   = t[2]
@@ -172,8 +172,9 @@ local finalfn = function(pairs_iterator)
       local N = value[2] if not N or N==0 then N=1 end
       if params.smooth_gradients then
         -- gradients smoothing
-        weight_grads[key] = value[1]:scal( 1.0/math.sqrt(N) )
+        value[1]:scal( 1.0/math.sqrt(N) )
       end
+      weight_grads[key] = value[1]
     end
   end
   assert(tr_loss_mean)

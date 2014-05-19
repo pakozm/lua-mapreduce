@@ -7,7 +7,7 @@ local NUM_REDUCERS = 10
 local EXP_DBHOST   = "localhost"
 local EXP_DBNAME   = "exp_digits"
 
-local bunch_size     = 32
+local bunch_size     = 128
 local weights_random = random(1234)
 local description    = "256 inputs 128 tanh 10 log_softmax"
 local inf            = -1
