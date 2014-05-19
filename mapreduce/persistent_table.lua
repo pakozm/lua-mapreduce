@@ -41,30 +41,21 @@ function methods:update()
   local dirty   = self.dirty
   local content = self.content
   local db      = cnn:connect()
-  local remote_content = db:find_one(self.singleton_ns,
-                                     { _id = content._id })
+  local remote_content = db:find_one(self.singleton_ns, { _id = content._id })
   if not remote_content then
-    rawset(content,"timestamp",0)
-    content.finished  = false
+    content.timestamp = 0
     -- FIXME: between find_one and insert could occur a race condition :S
     assert( db:insert(self.singleton_ns, content) )
   else
-    if dirty then assert(content.timestamp == remote_content.timestamp) end
-    local merged_content = {}
-    for key,value in pairs(content) do merged_content[key] = value end
-    for key,value in pairs(remote_content) do
-      if not merged_content[key] then
-        merged_content[key] = value
-        rawset(self.content,key,value)
-      end
-    end
     if dirty then
-      merged_content.timestamp = assert(merged_content.timestamp) + 1
+      -- write results
+      assert(content.timestamp == remote_content.timestamp)
+      content.timestamp = assert(content.timestamp) + 1
       assert( db:update(self.singleton_ns,
-                        { _id = merged_content._id },
-                        merged_content,
-                        true, false) )
-      rawset(content,"timestamp",merged_content.timestamp)
+                        { _id = content._id }, content, true, false) )
+    else
+      for k,v in pairs(content) do content[k] = nil end
+      for k,v in pairs(remote_content) do content[k] = v end
     end
   end
   self.dirty = false
@@ -74,11 +65,11 @@ end
 function methods:drop()
   local self = getmetatable(self).obj
   local db = self.cnn:connect()
-  db:drop_collection(self.singleton_ns)
+  db:remove(self.singleton_ns, { _id = self.content._id }, true)
 end
 
 local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true,
-                   read_only=true, dirty=true, finished=true }
+                   read_only=true, dirty=true }
 -- sets a collection of pairs key,value from the given table
 function methods:set(tbl)
   local self = getmetatable(self).obj
@@ -138,7 +129,12 @@ function persistent_table:__call(name, cnn_string, dbname, auth_table)
                  end,
                  -- sets the value of a key,value pair
                  __newindex = function(self,key,value)
-                   local_set(self,{ [key]=value })
+                   if value == nil then
+                     obj.content[key] = nil
+                     obj.dirty = true
+                   else
+                     local_set(self,{ [key]=value })
+                   end
                  end,
                  -- shows a JSON string
                  __tostring = function(self)
