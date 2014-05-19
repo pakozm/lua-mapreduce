@@ -97,13 +97,17 @@ local mapfn = function(key, value, emit)
   local train_func = deserialize_from_gridfs(gridfs, assert(conf.train_func))
   local trainer = train_func:get_state_table().last
   conf:read_only(true)
-  local weight_grads,loss_matrix = compute_gradients_and_loss(trainer,
-                                                              key, value,
-                                                              conf)
+  local weight_grads,loss_matrix,bunch_size =
+    compute_gradients_and_loss(trainer, key, value, conf)
   conf:read_only(false)
+  assert(weight_grads and loss_matrix and bunch_size,
+         "compute_gradients_and_loss had to return gradients, loss_matrix and bunch_size")
   for name,grads in pairs(weight_grads) do
     serialize_and_map_emit(name,
-                           { grads, trainer:weights(name):get_shared_count() },
+                           {
+                             grads,
+                             trainer:weights(name):get_shared_count()*bunch_size
+                           },
                            emit)
   end
   serialize_and_map_emit(TR_LOSS_KEY, loss_matrix, emit)
@@ -129,7 +133,7 @@ local reducefn = function(key, values, emit)
     end
     serialize_and_red_emit({ loss:get_accum_loss() }, emit)
   else
-    -- accumulate here the shared count
+    -- accumulate gradients and shared count
     local t = deserialize_emitted_value(values[1])
     local gradient = t[1]
     local counts   = t[2]
@@ -165,10 +169,12 @@ local finalfn = function(pairs_iterator)
       tr_loss_mean = value[1]
       tr_loss_var  = value[2]
     else
+      local N = value[2] if not N or N==0 then N=1 end
+      if params.smooth_gradients then
+        -- gradients smoothing
+        value[1]:scal( 1.0/math.sqrt(N) )
+      end
       weight_grads[key] = value[1]
-      local w = trainer:weights(key)
-      w:reset_shared_count()
-      w:add_to_shared_count(value[2])
     end
   end
   assert(tr_loss_mean)
@@ -214,6 +220,7 @@ local make_map_reduce_task_table = function(t)
       user_taskfn                = { mandatory = true, type_match="function" },
       user_finalfn               = { mandatory = true, type_match="function" },
       generate_new_trainer_and_train_func = { mandatory = true, type_match="function" },
+      smooth_gradients = { mandatory = false, default = true },
     }, t)
   --
   dbname = params.dbname
