@@ -36,7 +36,7 @@ local utils  = require "mapreduce.utils"
 local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
 
--- PRIVATE FUNCTIONS
+-- PRIVATE FUNCTIONS AND PROPERTIES
 
 -- executes the worker main loop; it runs querying the task object for new jobs
 local worker_execute = function(self)
@@ -92,6 +92,7 @@ local worker_execute = function(self)
       ntasks     = ntasks + 1
       job_done   = false
       job.reset_cache()
+      task.reset_cache()
     end
     if ntasks < MAX_TASKS then
       print(string.format("# WAITING...\tntasks: %d/%d\tit: %d/%d\tsleep: %.1f",

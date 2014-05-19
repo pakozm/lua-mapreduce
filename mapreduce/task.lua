@@ -243,7 +243,14 @@ function task:get_partition_args()
   return self.tbl.init_args
 end
 
--- JOB INTERFACE
+-- TASK INTERFACE
+
+local cache_map_ids     = {}
+local cache_inv_map_ids = {}
+function task.reset_cache()
+  cache_map_ids     = {}
+  cache_inv_map_ids = {}
+end
 
 -- workers use this method to load a new job in the caller object
 function task:take_next_job(tmpname)
@@ -265,6 +272,12 @@ function task:take_next_job(tmpname)
       { status = STATUS.BROKEN, },
     },
   }
+  -- after first iteration, map jobs done previously will be taken if possible,
+  -- reducing the overhead for loading data
+  if self:get_iteration() > 1 and task_status == TASK_STATUS.MAP then
+    query._id = { ["$in"] = cache_map_ids }
+    if db:count(jobs_ns, query) == 0 then query._id = nil end
+  end
   local set_query = {
     worker       = utils.get_hostname(),
     tmpname      = tmpname_summary(tmpname),
@@ -282,6 +295,13 @@ function task:take_next_job(tmpname)
   -- updated its data
   local job_tbl = db:find_one(jobs_ns, set_query)
   if job_tbl then
+    if task_status == TASK_STATUS.MAP then
+      local _id = job_tbl._id
+      if not cache_inv_map_ids[_id] then
+        cache_inv_map_ids[_id] = true
+        table.insert(cache_map_ids, _id)
+      end
+    end
     local storage,path = self:get_storage()
     return task_status,job(self.cnn, job_tbl, task_status,
                            self:get_fname(), self:get_args(),
