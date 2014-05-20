@@ -6,7 +6,7 @@ before_install:
   - wget https://github.com/moai/luamongo/archive/v0.4.1.tar.gz
   - tar zxvf v0.4.1.tar.gz
   - cd luamongo-0.4.1 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
-  - ssh-kegen -b 2048 -t rsa -q -N ""
+  - ssh-keygen -b 2048 -t rsa -q -N ""
   - cp ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys
 language: lua
 script: ./test.sh
