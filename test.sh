@@ -1,4 +1,5 @@
 #!/bin/bash
+which lua
 export lua=lua5.2
 $lua mapreduce/test.lua
 
