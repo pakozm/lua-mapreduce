@@ -1,5 +1,4 @@
 #!/bin/bash
-LUA_PATH="./?/init.lua;./?.lua;$LUA_PATH"
 lua mapreduce/test.lua
 
 if [[ $? -ne 0 ]]; then
