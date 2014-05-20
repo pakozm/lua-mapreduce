@@ -99,17 +99,18 @@ end
 ------------------------------------------------------------------------------
 
 -- constructor using encapsulation design pattern in Lua
-function persistent_table:__call(name, cnn_string, dbname, auth_table)
+function persistent_table:__call(name, cnn_string, dbname, ns, auth_table)
   assert(type(name) == "string","First argument is a string name for the table")
   local cnn_string = cnn_string or "localhost"
   local dbname = dbname or "tmp"
+  local ns = ns or "singletons"
   -- obj is hidden inside a closure
   local obj = {
     cnn     = cnn(cnn_string, dbname, auth_table),
     name    = name,
     dirty   = false,
     read_only = false,
-    singleton_ns = dbname .. ".singletons",
+    singleton_ns = dbname .. "." .. ns,
     content = { _id = name },
   }
   -- visible_table has been prepared to capture obj table as closure of its
