@@ -333,7 +333,7 @@ local function assert_check(value)
   local tt = type(value)
   if tt == "table" then
     for k,v in pairs(value) do
-      check(k,v)
+      assert_check(k,v)
     end
   elseif tt == "function" then
     error("Impossible to assign a function in a JSON table")
