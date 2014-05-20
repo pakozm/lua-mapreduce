@@ -1,2 +1,3 @@
 #!/bin/bash
-lua execute_worker.lua localhost wordcount
+export lua=lua5.2
+$lua execute_worker.lua localhost wordcount
