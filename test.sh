@@ -1,4 +1,5 @@
 #!/bin/bash
+export lua=lua5.2
 lua mapreduce/test.lua
 
 if [[ $? -ne 0 ]]; then
