@@ -11,7 +11,7 @@ before_install:
   - cd luamongo-0.4.1 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
   - ssh-keygen -b 2048 -f /home/travis/.ssh/id_rsa -t rsa -q -N ""
   - ssh-keyscan -t rsa localhost > ~/.ssh/known_hosts
-  - ssh-keyscan -t rsa $(hostname) > ~/.ssh/known_hosts
+  - ssh-keyscan -t rsa $(hostname) >> ~/.ssh/known_hosts
   - cp ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys
 language: lua
 script: ./test.sh
