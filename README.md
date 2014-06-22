@@ -43,7 +43,7 @@ is not fair because the data could be stored in the local filesystem.
 The output of lua-mapreduce was:
 
 ```
-$ ./execute_BIG_server.sh  > output
+$ ./execute_BIG_server.sh > output
 # Iteration 1
 # 	 Preparing Map
 # 	 Map execution, size= 197
@@ -51,17 +51,25 @@ $ ./execute_BIG_server.sh  > output
 # 	 Preparing Reduce
 # 	 Reduce execution, num_files= 1970  size= 10
 	  100.0 % 
+#   Map sum(cpu_time)     80.297174
+#   Reduce sum(cpu_time)  56.829328
+# Sum(cpu_time)           137.126502
+#   Map sum(real_time)    84.476371
+#   Reduce sum(real_time) 63.458693
+# Sum(real_time)          147.935064
+# Sum(sys_time)           10.808562
+#   Map cluster time      26.661836
+#   Reduce cluster time   20.710385
+# Cluster time            47.372221
+# Failed maps     0
+# Failed reduces  0
+# Server time 49.229152
 # 	 Final execution
-#   Map sum(cpu_time)    99.278813
-#   Reduce sum(cpu_time) 57.789231
-# Sum(cpu_time)          157.068044
-#   Map real time    42
-#   Reduce real time 22
-# Real time          64
-# Total iteration time 66 seconds
 ```
 
-**Note:** using only one worker takes: 117 seconds
+**Note 1:** using only one worker takes: 146 seconds
+
+**Note 2:** using 30 mappers and 10 reducers (30 workers) takes: 35 seconds
 
 A naive word-count version implemented with pipes and shellscripts takes:
 
@@ -85,12 +93,13 @@ sys     0m0.324s
 
 Looking to these numbers, it is clear that the better is to work in main memory
 and in local storage filesystem, as in the naive Lua implementation, which needs
-only 17 seconds (user time), but uses local disk files. The map-reduce approach
-takes 64 seconds (real time) with four workers and 146 seconds (user time) with
+only 26 seconds (real time), but uses local disk files. The map-reduce approach
+takes 49 seconds (real time) with four workers and 146 seconds (real time) with
 only one worker. These last two numbers are comparable with the naive
-shellscript implementation using pipes, which takes 143 seconds (user
-time). Concluding, the preliminar lua-mapreduce implementation, using MongoDB
-for communication and GridFS for auxiliary storage, is up to **2** times faster
+shellscript implementation using pipes, which takes 146 seconds (real
+time). Concluding, the preliminar lua-mapreduce implementation, using four workers
+and MongoDB
+for communication and GridFS for auxiliary storage, is up to **3** times faster
 than a shellscript implementation using pipes. Both implementations sort the
 data in order to aggregate the results. In the future, a larger data task will
 be choosen to compare this implementation with raw map-reduce in MongoDB and/or
