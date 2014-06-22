@@ -17,6 +17,7 @@
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ]]
 local mongo = require "mongo"
+local heap  = require "mapreduce.heap"
 
 assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
 
@@ -203,48 +204,40 @@ local function merge_iterator(fs, filenames, make_lines_iterator)
     line_iterators[ #line_iterators+1 ] = make_lines_iterator(name)
   end
   local finished = false
-  local data = {}
+  -- heap for efficient merge operation
+  local cmp   = function(a,b) return a[1] < b[1] end
+  local queue = heap(cmp)
+  local data  = {}
   -- take the next data of a given file number
   local take_next = function(which)
     if line_iterators[which] then
       local line = line_iterators[which]()
       if line then
-        data[which] = data[which] or {}
-        data[which][3],data[which][1],data[which][2] =
-          line,assert(load(line),
-                      string.format("Impossible to load line '%s' from '%s'",
-                                    line, filenames[which]))()
+        local l,k,v = line,assert(load(line),
+                                  string.format("Impossible to load line '%s' from '%s'",
+                                                line, filenames[which]))()
+        queue:push({ k, v, l, which })
       else
-        data[which] = nil
         line_iterators[which] = nil
       end
-    else
-      data[which] = nil
     end
   end
-  -- we finished when all the data is nil
-  local finished = function()
-    local ret = true
-    for i=1,#filenames do
-      if data[i] ~= nil then ret = false break end
+  -- merge all the data which shares min key
+  local merge_min_keys = function()
+    local top = queue:top()
+    queue:pop()
+    local key    = top[1] -- key
+    local result = top[2] -- value
+    take_next(top[4])
+    while not queue:empty() and key == queue:top()[1] do
+      local aux   = queue:top()
+      local v     = aux[2]
+      local which = aux[4]
+      queue:pop()
+      take_next(which)
+      for j=1,#v do result[ #result+1 ] = v[j] end
     end
-    return ret
-  end
-  -- look for all the data which has the min key
-  local search_min = function()
-    local key
-    local list = {}
-    for i=1,#filenames do
-      if data[i] then
-        local current = data[i][1]
-        if not key or current <= key then
-          if not key or current < key then list = {} end
-          table.insert(list,i)
-          key = current
-        end
-      end
-    end
-    return list
+    return key,result
   end
   -- initialize data with first line over all files
   for i=1,#filenames do take_next(i) end
@@ -256,30 +249,12 @@ local function merge_iterator(fs, filenames, make_lines_iterator)
     local assert       = assert
     local data         = data
     local take_next    = take_next
-    local finished     = finished
-    -- merge all the files until finished
-    while not finished() do
+    local queue        = queue
+    -- merge all the files until finished (empty queue)
+    while not queue:empty() do
       counter = counter + 1
       --
-      local mins_list = search_min()
-      assert(#mins_list > 0)
-      local key = data[mins_list[1]][1]
-      local result
-      if #mins_list == 1 then
-        -- only one secuence of values, nothing to merge
-        result = data[mins_list[1]][2]
-        take_next(mins_list[1])
-      else -- if #mins_list == 1 then ... else
-        result = {}
-        for i=1,#mins_list do
-          local which = mins_list[i]
-          -- sanity check
-          assert(data[which][1] == key)
-          local v = data[which][2]
-          for j=1,#v do result[ #result+1 ] = v[j] end
-          take_next(which)
-        end
-      end -- if #mins_list == 1 then ... else ... end
+      local key,result = merge_min_keys()
       -- verbose output
       if counter % MAX_IT_WO_CGARBAGE == 0 then
         collectgarbage("collect")
