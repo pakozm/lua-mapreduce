@@ -69,7 +69,7 @@ $ ./execute_BIG_server.sh > output
 
 **Note 1:** using only one worker takes: 146 seconds
 
-**Note 2:** using 30 mappers and 10 reducers (30 workers) takes: 35 seconds
+**Note 2:** using 30 mappers and 15 reducers (30 workers) takes: 32 seconds
 
 A naive word-count version implemented with pipes and shellscripts takes:
 

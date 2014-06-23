@@ -22,7 +22,7 @@ local utils  = require "mapreduce.utils"
 local persistent_table = require "mapreduce.persistent_table"
 
 local mapreduce = {
-  _VERSION = "0.3.2",
+  _VERSION = "0.3.4",
   _NAME    = "mapreduce",
   worker   = worker,
   server   = server,

@@ -139,7 +139,7 @@ local function gridfs_lines_iterator(gridfs, filename)
     local gridfs = gridfs
     local gridfile = gridfile
     if current_chunk < num_chunks then
-      chunk = chunk or gridfile:chunk(current_chunk)
+      chunk = chunk or assert( gridfile:chunk(current_chunk) )
       if current_pos <= chunk:len() then
         local first_chunk = current_chunk
         local last_chunk  = current_chunk
@@ -149,7 +149,7 @@ local function gridfs_lines_iterator(gridfs, filename)
         for k,v in ipairs(tbl) do tbl[k] = nil end
         local found_line = false
         repeat
-          chunk = chunk or gridfile:chunk(current_chunk)
+          chunk = chunk or assert( gridfile:chunk(current_chunk) )
           data  = data  or chunk:data()
           local chunk_len = chunk:len()
           local match = data:match("^([^\n]*)\n", current_pos)
@@ -157,7 +157,7 @@ local function gridfs_lines_iterator(gridfs, filename)
             tbl[ #tbl+1 ] =  match
             current_pos = #match + current_pos + 1 -- +1 because of the \n
             abs_pos     = #match + abs_pos + 1
-            found_line = true
+            found_line  = true
           else -- if match ... then
             -- inserts the whole chunk substring, no \n match found
             tbl[ #tbl+1 ] = data:sub(current_pos, chunk_len)
@@ -250,8 +250,8 @@ local function merge_iterator(fs, filenames, make_lines_iterator)
     local data         = data
     local take_next    = take_next
     local queue        = queue
-    -- merge all the files until finished (empty queue)
-    while not queue:empty() do
+    -- merge all the files until empty queue (finished)
+    if not queue:empty() then
       counter = counter + 1
       --
       local key,result = merge_min_keys()
@@ -260,7 +260,7 @@ local function merge_iterator(fs, filenames, make_lines_iterator)
         collectgarbage("collect")
       end
       return key,result
-    end -- while not finished()
+    end -- if not finished
   end -- return function
 end
 

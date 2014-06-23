@@ -33,7 +33,8 @@ local fs = {
 local utils = require "mapreduce.utils"
 
 local make_wildcard_from_mongo_match = function(match_tbl)
-  return match_tbl.filename["$regex"]:gsub("%.%*","*"):gsub("[$^]","")
+  return match_tbl.filename["$regex"]:
+  gsub("\\%.","."):gsub("%.%*","*"):gsub("[$^]","")
 end
 
 ------------------------------------------------------------------------------

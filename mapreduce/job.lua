@@ -251,7 +251,7 @@ function job_prepare_reduce(self, g, storage, path)
     local fs,make_builder,make_lines_iterator = fs.router(self.cnn,mappers,
                                                           storage,path)
     local filenames = {}
-    local match_str = string.format("^%s.*", job_file)
+    local match_str = string.format("^%s\\..*", job_file)
     local list = fs:list({ filename = { ["$regex"] = match_str } })
     for v in list:results() do
       table.insert(filenames, v.filename)
