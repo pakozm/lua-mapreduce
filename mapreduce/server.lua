@@ -124,6 +124,12 @@ local get_storage_from = utils.get_storage_from
 
 -- PRIVATE FUNCTIONS AND METHODS
 
+local function keys_of(t)
+  local out = {}
+  for k,_ in pairs(t) do table.insert(out, k) end
+  return out
+end
+
 local function count_digits(n)
   -- sanity check
   assert(n >= 0, "Only valid for positive integers")
@@ -293,7 +299,7 @@ local function server_prepare_reduce(self)
     max_part_key = math.max(max_part_key, part_key)
     -- annotate the mapper
     mappers_by_part_key[part_key] = mappers_by_part_key[part_key] or {}
-    table.insert(mappers_by_part_key[part_key], map_hostnames[mapper_key])
+    mappers_by_part_key[part_key][ map_hostnames[mapper_key] ] = true
   end
   local part_key_digits = count_digits(max_part_key)
   local result_str_format = "%s.P%0" .. tostring(part_key_digits) .. "d"
@@ -301,7 +307,7 @@ local function server_prepare_reduce(self)
   for part_key,_ in pairs(part_keys) do
     count = count + 1
     local value = {
-      mappers = mappers_by_part_key[part_key],
+      mappers = keys_of(mappers_by_part_key[part_key]),
       file    = string.format("%s/%s.P%d", path, map_results_ns, part_key),
       result  = string.format(result_str_format, self.result_ns, part_key),
     }

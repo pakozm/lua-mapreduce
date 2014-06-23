@@ -1,5 +1,5 @@
 -- string hash function: http://isthe.com/chongo/tech/comp/fnv/
-local NUM_REDUCERS = 10
+local NUM_REDUCERS = 15
 local FNV_prime    = 16777619
 local offset_basis = 2166136261
 local MAX          = 2^32

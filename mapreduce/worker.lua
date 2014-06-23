@@ -124,12 +124,12 @@ function worker_methods:execute()
           num_failed_jobs = num_failed_jobs + 1
         end
         failed_jobs[id] = true
-      end
+      end -- if self.current_job then
       self.cnn:flush_pending_inserts(0)
       self.cnn:insert_error(utils.get_hostname(), msg)
-      print(string.format("Error executing a job: %s",msg))
+      io.stderr:write(string.format("Error executing a job: %s\n",msg))
       utils.sleep(utils.DEFAULT_SLEEP*4)
-    end
+    end -- if not ok then
   until ok or num_failed_jobs >= utils.MAX_WORKER_RETRIES
   print(string.format("# Worker retries: %d",num_failed_jobs))
   if num_failed_jobs >= utils.MAX_WORKER_RETRIES then
