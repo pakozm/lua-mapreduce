@@ -307,8 +307,15 @@ end
 local function assert_check(value)
   local tt = type(value)
   if tt == "table" then
+    local n=0
+    local not_string_key = false
     for k,v in pairs(value) do
       assert_check(k,v)
+      n = n + 1
+      if type(k) ~= "string" then not_string_key = true end
+    end
+    if n ~= #value and not_string_key then
+      error("Impossible to mix not string keys with string keys")
     end
   elseif tt == "function" then
     error("Impossible to assign a function in a JSON table")
