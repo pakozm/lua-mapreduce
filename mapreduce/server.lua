@@ -153,7 +153,7 @@ end
 
 local function compute_real_time(db, ns)
   local out_min = assert( db:mapreduce(ns, [[
-function() { emit(0, this.started_time) } ]],
+function() { emit(0, ( this.started_time ) ? this.started_time : this.creation_time ) } ]],
                                        [[
 function(k,v) {
   var min=v[0];
@@ -162,7 +162,7 @@ function(k,v) {
   return min;
 }]]) )
   local out_max = assert( db:mapreduce(ns, [[
-function() { emit(0, this.written_time) } ]],
+function() { emit(0, ( this.written_time ) ? this.written_time : this.creation_time ) } ]],
                                        [[
 function(k,v) {
   var max=v[0];
