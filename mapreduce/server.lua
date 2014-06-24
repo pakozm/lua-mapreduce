@@ -145,8 +145,8 @@ end
 local function wrap_pcall(func, ...)
   local ok,result = xpcall(func, debug.traceback, ...)
   if not ok then
-    io.stderr:write(string.format("%s\n", result))
-    result = math.huge
+    -- io.stderr:write(string.format("%s\n", result))
+    result = 0
   end
   return result
 end
