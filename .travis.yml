@@ -6,9 +6,9 @@ before_install:
   - sudo apt-get install -y screen lua5.2 liblua5.2-dev libboost-filesystem-dev libboost-filesystem-dev libboost-thread-dev libssl-dev
   - git clone https://github.com/mongodb/mongo-cxx-driver.git
   - cd mongo-cxx-driver && sudo scons --prefix=/usr install-mongoclient && cd -
-  - wget https://github.com/moai/luamongo/archive/v0.4.2.tar.gz
-  - tar zxvf v0.4.2.tar.gz
-  - cd luamongo-0.4.2 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
+  - wget https://github.com/moai/luamongo/archive/v0.4.3.tar.gz
+  - tar zxvf v0.4.3.tar.gz
+  - cd luamongo-0.4.3 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
   - ssh-keygen -b 2048 -f /home/travis/.ssh/id_rsa -t rsa -q -N ""
   - ssh-keyscan -t rsa localhost > ~/.ssh/known_hosts
   - ssh-keyscan -t rsa $(hostname) >> ~/.ssh/known_hosts
