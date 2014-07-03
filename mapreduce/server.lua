@@ -142,9 +142,18 @@ local function count_digits(n)
   return c
 end
 
+local function wrap_pcall(func, ...)
+  local ok,result = xpcall(func, debug.traceback, ...)
+  if not ok then
+    -- io.stderr:write(string.format("%s\n", result))
+    result = 0
+  end
+  return result
+end
+
 local function compute_real_time(db, ns)
   local out_min = assert( db:mapreduce(ns, [[
-function() { emit(0, this.started_time) } ]],
+function() { emit(0, ( this.started_time ) ? this.started_time : this.creation_time ) } ]],
                                        [[
 function(k,v) {
   var min=v[0];
@@ -153,7 +162,7 @@ function(k,v) {
   return min;
 }]]) )
   local out_max = assert( db:mapreduce(ns, [[
-function() { emit(0, this.written_time) } ]],
+function() { emit(0, ( this.written_time ) ? this.written_time : this.creation_time ) } ]],
                                        [[
 function(k,v) {
   var max=v[0];
@@ -526,16 +535,22 @@ function server_methods:loop()
     local total_time = end_time - start_time
     self.task:insert_finished_time(end_time)
     -- STATISTICS
-    local map_sum_cpu_time = compute_sum(db, self.task:get_map_jobs_ns(),
-                                         "cpu_time")
-    local red_sum_cpu_time = compute_sum(db, self.task:get_red_jobs_ns(),
-                                         "cpu_time")
-    local map_sum_real_time = compute_sum(db, self.task:get_map_jobs_ns(),
-                                          "real_time")
-    local red_sum_real_time = compute_sum(db, self.task:get_red_jobs_ns(),
-                                          "real_time")
-    local map_real_time    = compute_real_time(db, self.task:get_map_jobs_ns())
-    local red_real_time    = compute_real_time(db, self.task:get_red_jobs_ns())
+    local map_sum_cpu_time = wrap_pcall(compute_sum, db,
+                                        self.task:get_map_jobs_ns(),
+                                        "cpu_time")
+    local red_sum_cpu_time = wrap_pcall(compute_sum, db,
+                                        self.task:get_red_jobs_ns(),
+                                        "cpu_time")
+    local map_sum_real_time = wrap_pcall(compute_sum, db,
+                                         self.task:get_map_jobs_ns(),
+                                         "real_time")
+    local red_sum_real_time = wrap_pcall(compute_sum, db,
+                                         self.task:get_red_jobs_ns(),
+                                         "real_time")
+    local map_real_time    = wrap_pcall(compute_real_time, db,
+                                        self.task:get_map_jobs_ns())
+    local red_real_time    = wrap_pcall(compute_real_time, db,
+                                        self.task:get_red_jobs_ns())
 
     io.stderr:write(string.format("#   Map sum(cpu_time)     %f\n",
                                   map_sum_cpu_time))

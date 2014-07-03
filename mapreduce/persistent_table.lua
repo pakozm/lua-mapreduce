@@ -26,8 +26,11 @@ local persistent_table = {
   _NAME = "mapreduce.persistent_table",
 }
 
+local mongo = require "mongo"
 local utils = require "mapreduce.utils"
 local cnn   = require "mapreduce.cnn"
+
+local LOCK_SLEEP = 0.1
 
 -- PUBLIC METHODS
 
@@ -36,40 +39,59 @@ local methods = {}
 -- updates current object with MongoDB collection; in case of inconsistency
 -- between this object and database, an assert will be thrown
 function methods:update()
-  local self    = getmetatable(self).obj
-  local cnn     = self.cnn
-  local dirty   = self.dirty
-  local content = self.content
-  local db      = cnn:connect()
-  local remote_content = db:find_one(self.singleton_ns, { _id = content._id })
-  if not remote_content then
-    content.timestamp = 0
-    -- FIXME: between find_one and insert could occur a race condition :S
-    assert( db:insert(self.singleton_ns, content) )
+  local self       = getmetatable(self).obj
+  local cnn        = self.cnn
+  local dirty      = self.dirty
+  local content    = self.content
+  local db         = cnn:connect()
+  local query      = { _id = content._id, }
+  local update     = { }
+  if dirty then
+    query.timestamp   = content.timestamp
+    content.timestamp = nil
+    local t = {}
+    update["$set"] = t
+    for k,v in pairs(content) do t[k] = v end
+    t._id = nil
+    update["$inc"] = { timestamp = 1 }
   else
-    if dirty then
-      -- write results
-      assert(content.timestamp == remote_content.timestamp)
-      content.timestamp = assert(content.timestamp) + 1
-      assert( db:update(self.singleton_ns,
-                        { _id = content._id }, content, true, false) )
-    else
-      for k,v in pairs(content) do content[k] = nil end
-      for k,v in pairs(remote_content) do content[k] = v end
-    end
+    update["$set"] = { __dummy__ = true }
   end
+  local result =
+    assert( db:run_command(self.dbname,
+			   {
+			     cmd = "findAndModify",
+			     findAndModify = self.document,
+			     query  = query,
+			     update = update,
+			     upsert = false,
+			     new    = true, }) )
+  local remote_content = result.value
+  assert(mongo.type(remote_content) ~= "mongo.NULL",
+	 "Impossible to update, data is not consistent")
   self.dirty = false
 end
 
 -- removes the collection at the database, allowing to start from zero
 function methods:drop()
+  local aux = self
   local self = getmetatable(self).obj
   local db = self.cnn:connect()
-  db:remove(self.singleton_ns, { _id = self.content._id }, true)
+  local result =
+    assert( db:run_command(self.dbname,
+			   {
+			     cmd = "findAndModify",
+			     findAndModify = self.document,
+			     query = { _id = self.content._id },
+			     update = { __dummy__ = true },
+			     upsert=true,
+			     new=true, }) )
+  assert(mongo.type(result.value) ~= "mongo.NULL")
+  self.content = result.value
 end
 
 local reserved = { _id=true, timestamp=true, set=true, update=true, drop=true,
-                   read_only=true, dirty=true }
+                   read_only=true, dirty=true, locked=true, __dummy__=true }
 -- sets a collection of pairs key,value from the given table
 function methods:set(tbl)
   local self = getmetatable(self).obj
@@ -86,6 +108,51 @@ function methods:set(tbl)
 end
 local local_set = methods.set
 
+function methods:lock()
+  local self    = getmetatable(self).obj
+  local db      = self.cnn:connect()
+  local content = self.content
+  local remote_content
+  repeat
+    local result  =
+      assert( db:run_command(self.dbname,
+			     {
+			       cmd = "findAndModify",
+			       findAndModify = self.document,
+			       query  = { _id = content._id },
+			       update = {
+				 ["$set"] = { locked = true },
+			       },
+			       upsert = false,
+			       new    = false, }) )
+    remote_content = result.value
+    assert(mongo.type(remote_content) ~= "mongo.NULL")
+    if remote_content.locked then utils.sleep(LOCK_SLEEP) end
+  until not remote_content.locked
+  self.locked = true
+end
+
+function methods:unlock()
+  local self    = getmetatable(self).obj
+  local db      = self.cnn:connect()
+  local content = self.content
+  local remote_content
+  local result  =
+    assert( db:run_command(self.dbname,
+			   {
+			     cmd = "findAndModify",
+			     findAndModify = self.document,
+			     query  = { _id  = content._id },
+			     update = {
+			       ["$set"] = { locked = false },
+			     },
+			     upsert = false,
+			     new    = false, }) )
+  remote_content = result.value
+  assert(mongo.type(remote_content) ~= "mongo.NULL")
+  self.locked = false
+end
+
 function methods:read_only(v)
   local self = getmetatable(self).obj
   self.read_only = v
@@ -99,20 +166,37 @@ end
 ------------------------------------------------------------------------------
 
 -- constructor using encapsulation design pattern in Lua
-function persistent_table:__call(name, cnn_string, dbname, ns, auth_table)
+function persistent_table:__call(name, cnn_string, dbname,
+				 document, auth_table)
   assert(type(name) == "string","First argument is a string name for the table")
   local cnn_string = cnn_string or "localhost"
   local dbname = dbname or "tmp"
-  local ns = ns or "singletons"
+  local document = document or "singletons"
   -- obj is hidden inside a closure
   local obj = {
     cnn     = cnn(cnn_string, dbname, auth_table),
     name    = name,
     dirty   = false,
     read_only = false,
-    singleton_ns = dbname .. "." .. ns,
-    content = { _id = name },
+    dbname = dbname,
+    document = document,
+    singleton_ns = dbname .. "." .. document,
+    content  = { _id = name },
   }
+  local db = obj.cnn:connect()
+  local result =
+    assert( db:run_command(obj.dbname,
+			   {
+			     cmd = "findAndModify",
+			     findAndModify = obj.document,
+			     query = obj.content,
+			     update = {
+			       ["$set"] = { __dummy__ = true },
+			     },
+			     upsert=true,
+			     new=true, }) )
+  assert(mongo.type(result.value) ~= "mongo.NULL")
+  obj.content = result.value
   -- visible_table has been prepared to capture obj table as closure of its
   -- metatable, allowing to implement data encapsulation design pattern in Lua
   local visible_table = {}
@@ -120,6 +204,12 @@ function persistent_table:__call(name, cnn_string, dbname, ns, auth_table)
                {
                  -- retrieve the obj table from an instance of visible_table
                  obj = obj,
+		 -- unlock for just in case
+		 __gc = function()
+		   if obj.locked == true then
+		     self:unlock()
+		   end
+		 end,
                  -- index a key
                  __index = function(self,key)
                    if methods[key] then
