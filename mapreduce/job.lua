@@ -193,7 +193,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local builders = {}
     for _,key in ipairs(keys) do
       local values = result[key]
-      if #values > 1 then
+      if #values > 1 and combiner then
         combiner(key,values,combiner_emit)
         copy_table_ipairs(values, self.combiner_result)
         clear_table(self.combiner_result)
