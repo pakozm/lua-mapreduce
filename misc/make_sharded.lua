@@ -67,6 +67,6 @@ if auth_user then
 end
 collectgarbage("collect")
 local gridfs = assert( mongo.GridFS.New(db, dbname) )
-db:run_command("admin", { enableSharding = dbname })
-db:run_command("admin", { shardCollection = dbname .. ".fs.chunks",
-                          key = { files_id = 1 } })
+assert( db:run_command("admin", { cmd="enableSharding", enableSharding = dbname }) )
+assert( db:run_command("admin", { cmd="shardCollection", shardCollection = dbname .. ".fs.chunks",
+				  key = { files_id = 1 } }) )
