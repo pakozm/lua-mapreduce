@@ -30,7 +30,7 @@ local mongo = require "mongo"
 local utils = require "mapreduce.utils"
 local cnn   = require "mapreduce.cnn"
 
-local LOCK_SLEEP = 0.1
+local LOCK_SLEEP = 0.1 -- in seconds
 
 -- PUBLIC METHODS
 
@@ -57,6 +57,7 @@ function methods:update()
   else
     update["$set"] = { __dummy__ = true }
   end
+  -- findAndModify returns the document AFTER the modification (new=true)
   local result =
     assert( db:run_command(self.dbname,
 			   {
@@ -77,6 +78,7 @@ function methods:drop()
   local aux = self
   local self = getmetatable(self).obj
   local db = self.cnn:connect()
+  -- findAndModify returns the document AFTER the modification (new=true)
   local result =
     assert( db:run_command(self.dbname,
 			   {
@@ -114,6 +116,8 @@ function methods:lock()
   local content = self.content
   local remote_content
   repeat
+    -- findAndModify returns the document value BEFORE the modification
+    -- (new=false) ...
     local result  =
       assert( db:run_command(self.dbname,
 			     {
@@ -127,6 +131,7 @@ function methods:lock()
 			       new    = false, }) )
     remote_content = result.value
     assert(mongo.type(remote_content) ~= "mongo.NULL")
+    -- and before the modification it must be locked=false, otherwise sleep.
     if remote_content.locked then utils.sleep(LOCK_SLEEP) end
   until not remote_content.locked
   self.locked = true
@@ -137,6 +142,8 @@ function methods:unlock()
   local db      = self.cnn:connect()
   local content = self.content
   local remote_content
+  -- findAndModify returns the document value BEFORE the modification
+  -- (new=false) ...
   local result  =
     assert( db:run_command(self.dbname,
 			   {
@@ -184,6 +191,7 @@ function persistent_table:__call(name, cnn_string, dbname,
     content  = { _id = name },
   }
   local db = obj.cnn:connect()
+  -- findAndModify returns the document AFTER the modification (new=true)
   local result =
     assert( db:run_command(obj.dbname,
 			   {
