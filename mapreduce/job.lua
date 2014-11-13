@@ -81,7 +81,7 @@ local function job_get_func(self, fname, func, args)
     local clear_table = utils.clear_table
     self.result  = result
     self.emit    = function(key,value)
-      local key = tuple(key)
+      local key,value = tuple(key),tuple(value)
       -- assert(tostring(key),
       -- "emit function must receive a convertible to string key")
       local result = result
@@ -99,7 +99,7 @@ local function job_get_func(self, fname, func, args)
     self.result  = {}
     self.emit    = function(value)
       -- faster than table.insert
-      self.result[ #self.result+1 ] = value
+      self.result[ #self.result+1 ] = tuple(value)
     end
     self.associative_reducer = f.m.associative_reducer
     self.commutative_reducer = f.m.commutative_reducer
@@ -108,7 +108,7 @@ local function job_get_func(self, fname, func, args)
     self.combiner_result = {}
     self.combiner_emit = function(value)
       -- faster than table.insert
-      self.combiner_result[ #self.combiner_result+1 ] = value
+      self.combiner_result[ #self.combiner_result+1 ] = tuple(value)
     end
   end
   return f.m[func]
