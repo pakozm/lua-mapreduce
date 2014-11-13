@@ -90,8 +90,9 @@ local function proxy(t)
       __tostring = function(self) return tostring(t) end,
       __lt = function(self,other)
 	if type(other) ~= "table" then return false
-	elseif #t < #other then return true
+        elseif #t < #other then return true
 	elseif #t > #other then return false
+	elseif t == other then return false
 	else
 	  for i=1,#t do
 	    if t[i] > other[i] then return false end
