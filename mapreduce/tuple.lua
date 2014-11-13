@@ -133,8 +133,6 @@ local tuple_mt = {
     local t = { ... } if #t == 1 then t = t[1] end
     if type(t) ~= "table" then
       return t
-    elseif #t == 1 then
-      return tuple(t[1])
     else
       if t.is_tuple then return t end
       local new_tuple = tuple_constructor(t)
