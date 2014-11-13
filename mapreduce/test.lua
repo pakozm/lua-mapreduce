@@ -24,7 +24,8 @@ local task   = require "mapreduce.task"
 local server = require "mapreduce.server"
 local worker = require "mapreduce.worker"
 local persistent_table = require "mapreduce.persistent_table"
-local heap = require "mapreduce.heap"
+local heap  = require "mapreduce.heap"
+local tuple = require "mapreduce.tuple"
 
 utils.utest()
 cnn.utest()
@@ -35,5 +36,6 @@ server.utest()
 worker.utest()
 persistent_table.utest()
 heap.utest()
+tuple.utest()
 
 print("Ok")

@@ -19,6 +19,7 @@
 local worker = require "mapreduce.worker"
 local server = require "mapreduce.server"
 local utils  = require "mapreduce.utils"
+local tuple  = require "mapreduce.tuple"
 local persistent_table = require "mapreduce.persistent_table"
 
 local mapreduce = {
@@ -27,6 +28,7 @@ local mapreduce = {
   worker   = worker,
   server   = server,
   utils    = utils,
+  tuple    = tuple,
   persistent_table= persistent_table,
 }
 

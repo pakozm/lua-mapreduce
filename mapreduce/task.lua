@@ -64,6 +64,7 @@ local task = {
 
 local utils       = require "mapreduce.utils"
 local job         = require "mapreduce.job"
+local tuple       = require "mapreduce.tuple"
 local STATUS      = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
 local grp_tmp_dir = utils.GRP_TMP_DIR

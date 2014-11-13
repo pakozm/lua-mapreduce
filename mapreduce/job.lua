@@ -23,12 +23,13 @@
 -- written here in the storage given at 'task' collection.
 
 local job = {
-  _VERSION = "0.3",
+  _VERSION = "0.4",
   _NAME = "job",
 }
 
 local utils = require "mapreduce.utils"
 local fs = require "mapreduce.fs"
+local tuple = require "mapreduce.tuple"
 
 local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
@@ -80,8 +81,9 @@ local function job_get_func(self, fname, func, args)
     local clear_table = utils.clear_table
     self.result  = result
     self.emit    = function(key,value)
-      assert(tostring(key),
-             "emit function must receive a convertible to string key")
+      local key = tuple(key)
+      -- assert(tostring(key),
+      -- "emit function must receive a convertible to string key")
       local result = result
       result[key]  = result[key] or {}
       local N      = #result[key]
