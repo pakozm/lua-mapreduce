@@ -1,5 +1,6 @@
 --[[
-  This file is part of Lua-MapReduce
+  This file is part of Lua-Tuple (https://github.com/pakozm/lua-tuple)
+  This file is part of Lua-MapReduce (https://github.com/pakozm/lua-mapreduce)
   
   Copyright 2014, Francisco Zamora-Martinez
   
@@ -16,11 +17,6 @@
   along with this library; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ]]
-
--- The job class is used by workers to execute map/reduce job. This class allows
--- to write job status and to update job statistics in MongoDB. Execution of
--- user map/reduce/combiner modules is done in job class. Intermediate data is
--- written here in the storage given at 'task' collection.
 
 local tuple = {
   _VERSION = "0.1",
