@@ -139,7 +139,7 @@ local tuple_mt = {
       if t.is_tuple then return t end
       local new_tuple = tuple_constructor(t)
       local p = compute_hash(new_tuple) % NUM_BUCKETS
-      local bucket = (list_of_tuples[p] or setmetatable({}, { _mode="v" }))
+      local bucket = (list_of_tuples[p] or setmetatable({}, { __mode="v" }))
       list_of_tuples[p] = bucket
       for i,vi in ipairs(bucket) do
 	local equals = true
