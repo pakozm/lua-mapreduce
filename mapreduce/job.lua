@@ -23,12 +23,13 @@
 -- written here in the storage given at 'task' collection.
 
 local job = {
-  _VERSION = "0.3",
+  _VERSION = "0.4",
   _NAME = "job",
 }
 
 local utils = require "mapreduce.utils"
 local fs = require "mapreduce.fs"
+local tuple = require "mapreduce.tuple"
 
 local STATUS = utils.STATUS
 local TASK_STATUS = utils.TASK_STATUS
@@ -80,8 +81,9 @@ local function job_get_func(self, fname, func, args)
     local clear_table = utils.clear_table
     self.result  = result
     self.emit    = function(key,value)
-      assert(tostring(key),
-             "emit function must receive a convertible to string key")
+      local key,value = tuple(key),tuple(value)
+      -- assert(tostring(key),
+      -- "emit function must receive a convertible to string key")
       local result = result
       result[key]  = result[key] or {}
       local N      = #result[key]
@@ -97,7 +99,7 @@ local function job_get_func(self, fname, func, args)
     self.result  = {}
     self.emit    = function(value)
       -- faster than table.insert
-      self.result[ #self.result+1 ] = value
+      self.result[ #self.result+1 ] = tuple(value)
     end
     self.associative_reducer = f.m.associative_reducer
     self.commutative_reducer = f.m.commutative_reducer
@@ -106,7 +108,7 @@ local function job_get_func(self, fname, func, args)
     self.combiner_result = {}
     self.combiner_emit = function(value)
       -- faster than table.insert
-      self.combiner_result[ #self.combiner_result+1 ] = value
+      self.combiner_result[ #self.combiner_result+1 ] = tuple(value)
     end
   end
   return f.m[func]
@@ -193,7 +195,7 @@ function job_prepare_map(self, g, combiner_fname, partitioner_fname, init_args,
     local builders = {}
     for _,key in ipairs(keys) do
       local values = result[key]
-      if #values > 1 then
+      if #values > 1 and combiner then
         combiner(key,values,combiner_emit)
         copy_table_ipairs(values, self.combiner_result)
         clear_table(self.combiner_result)

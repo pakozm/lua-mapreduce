@@ -109,6 +109,7 @@ local utils  = require "mapreduce.utils"
 local task   = require "mapreduce.task"
 local cnn    = require "mapreduce.cnn"
 local fs     = require "mapreduce.fs"
+local tuple  = require "mapreduce.tuple"
 
 local MAX_JOB_RETRIES = utils.MAX_JOB_RETRIES
 local DEFAULT_HOSTNAME = utils.DEFAULT_HOSTNAME
@@ -254,8 +255,7 @@ local function server_prepare_map(self)
   local keys_check = {}
   self.taskfn.taskfn(function(key,value)
                        count = count + 1
-                       assert(tostring(key),
-                              "taskfn must return a convertible to string key")
+		       local key = tuple(key)
                        assert(not keys_check[key],
                               string.format("Duplicate key: %s", key))
                        keys_check[key] = true

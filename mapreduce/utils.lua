@@ -100,8 +100,13 @@ local function escape(str)
   if type(str) == "number" then
     return tostring(str)
   else
-    str = assert(tostring(str),"Unable to convert to string map value")
-    return ( string.format("%q",str):gsub("\\\n","\\n") )
+    if type(str) == "string" then
+      str = string.format("%q",str)
+    else
+      str = assert(tostring(str),"Unable to convert to string map value")
+    end
+    -- remove new lines
+    return ( str:gsub("\\\n","\\n") )
   end
 end
 
