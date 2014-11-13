@@ -73,6 +73,16 @@ local tuple_instance_mt = {
     for i=1,#self do result[#result+1] = tostring(self[i]) end
     return table.concat({"tuple(",table.concat(result, ", "),")"}, " ")
   end,
+  __concat = function(self,other)
+    local aux = {}
+    for i=1,#self do aux[#aux+1] = self[i] end
+    if type(other) == "table" then
+      for i=1,#other do aux[#aux+1] = other[i] end
+    else
+      aux[#aux+1] = other
+    end
+    return tuple(aux)
+  end,
 }
 
 local function proxy(t)
@@ -97,7 +107,10 @@ local function proxy(t)
 	-- equality is comparing references (tuples are in-mutable and interned)
 	if self == other then return true end
 	return self < other
-      end
+      end,
+      __pairs = function(self) return pairs(t) end,
+      __ipairs = function(self) return ipairs(t) end,
+      __concat = function(self,other) return t .. other end,
   })
 end
 
