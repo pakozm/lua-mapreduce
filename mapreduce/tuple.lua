@@ -107,7 +107,7 @@ local tuple_instance_mt = {
   __metatable = false,
   -- avoid to insert new elements
   __newindex = function(self) error("Unable to modify a tuple") end,
-  -- convert it to a string like: tuple( a, b, ... )
+  -- convert it to a string like: tuple{ a, b, ... }
   __tostring = function(self)
     local result = {}
     for i=1,#self do
@@ -115,7 +115,7 @@ local tuple_instance_mt = {
       if type(v) == "string" then v = string_format("%q",v) end
       result[#result+1] = tostring(v)
     end
-    return table_concat({"tuple(",table_concat(result, ", "),")"}, " ")
+    return table_concat({"tuple{",table_concat(result, ", "),"}"}, " ")
   end,
   -- concatenates two tuples or a tuple with a number, string or another table
   __concat = function(a,b)
@@ -142,7 +142,7 @@ local function proxy(tpl,n)
       __index = tpl,
       __newindex = function(self) error("Tuples are in-mutable data") end,
       __len = function(self) return getmetatable(self)[3] end,
-      -- __tostring = function(self) return tostring(getmetatable(self)[2]) end,
+      __tostring = function(self) return tostring(getmetatable(self)[2]) end,
       __lt = function(self,other)
 	local t = getmetatable(self)[2]
 	if type(other) ~= "table" then return false
