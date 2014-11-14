@@ -23,7 +23,7 @@ local tuple  = require "mapreduce.tuple"
 local persistent_table = require "mapreduce.persistent_table"
 
 local mapreduce = {
-  _VERSION = "0.3.4",
+  _VERSION = "0.3.5",
   _NAME    = "mapreduce",
   worker   = worker,
   server   = server,
