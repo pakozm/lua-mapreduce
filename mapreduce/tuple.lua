@@ -30,6 +30,18 @@ local tuple = {
   _NAME = "tuple",
 }
 
+-- the following hack is needed to allow unpack over tuples
+local table = require "table"
+local function table_unpack(t,i,n)
+  i = i or 1
+  n = n or #t
+  if i <= n then
+    return t[i], table_unpack(t, i + 1, n)
+  end
+end
+table.unpack = table_unpack
+unpack = table_unpack
+
 -- libraries import
 local assert = assert
 local getmetatable = getmetatable
@@ -54,39 +66,54 @@ local BYTE_MASK = 0x000000FF
 local WORD_MASK = 0xFFFFFFFF
 local MAX_NUMBER = 2^32
 local MAX_BUCKET_HOLES_RATIO = 100
-local NUM_BUCKETS = 2^20
+local NUM_BUCKETS = 2^18
 local WEAK_MT = { __mode="v" }
 
 -- the list of tuples is a hash table with a maximum of NUM_BUCKETS
 local list_of_tuples = {}
+-- a table with metadata of tuples, indexed by tuples reference
+local tuples_metadata = setmetatable({}, { __mode="k" })
+
+-- iterate over all chars of a string
+local function char_iterator(data,j) j=j+1 return j,string.byte(data:sub(j,j)) end
 
 -- converts a number into a binary string, for hash computation purposes
-local function dump_number(n)
-  assert(n < MAX_NUMBER, "Only valid for 32 bit numbers")
-  return string_format("%c%c%c%c",
-		       bit32_band(n,BYTE_MASK),
-		       bit32_band(bit32_rshift(n,8),BYTE_MASK),
-		       bit32_band(bit32_rshift(n,16),BYTE_MASK),
-		       bit32_band(bit32_rshift(n,24),BYTE_MASK))
+local function number_iterator(data,j)
+  if j < 4 then
+    local v = bit32_band(bit32_rshift(data,j*8),BYTE_MASK)
+    return j+1,v
+  end
+end
+
+-- forward declaration
+local compute_hash
+-- iterates over all the bytes of a value
+local function iterate(data)
+  local tt = type(data)
+  if tt == "string" then
+    return char_iterator,data,0
+  elseif tt == "number" then
+    assert(data < MAX_NUMBER, "Only valid for 32 bit numbers")
+    return number_iterator,data,0
+  elseif tt == "table" then
+    return iterate(compute_hash(data))
+  elseif tt == "nil" then
+    return function() end
+  else
+    local str = assert(tostring(data),
+		       "Needs an array with numbers, tables or strings")
+    return iterate(str)
+  end
 end
 
 -- computes the hash of a given tuple candidate
-local function compute_hash(t)
+compute_hash = function(t)
   local h = 0
   for i=1,#t do
     local v = t[i]
-    local tt = type(v)
-    -- dump the value if it is a number, another tuple or a nil value
-    if tt == "number" then v = dump_number(v)
-    elseif tt == "table" then v = dump_number(compute_hash(v))
-    elseif tt == "nil" then v = "nil"
-    end
-    -- sanity check
-    assert(type(v) == "string",
-	   "Needs an array with numbers, tables or strings")
-    -- hash computation for every char in the string v
-    for j=1,#v do
-      h = h + string_byte(string_sub(v,j,j))
+    -- hash computation for every byte number in iterator over v
+    for j,c in iterate(v) do
+      h = h + c
       h = h + bit32_lshift(h,10)
       h = bit32_bxor(h,  bit32_rshift(h,6))
       -- compute hash modules 2^32
@@ -131,42 +158,60 @@ local tuple_instance_mt = {
   end,
 }
 
+-- functions for accessing tuple metadata
+local unwrap = function(self) return tuples_metadata[self][1] end
+local len = function(self) return tuples_metadata[self][2] end
+local hash = function(self) return tuples_metadata[self][3] end
+--
+local proxy_metatable = {
+  __metatable = "is_tuple",
+  __index = function(self,k) return unwrap(self)[k] end,
+  __newindex = function(self) error("Tuples are in-mutable data") end,
+  __len = function(self) return len(self) end,
+  __tostring = function(self) return tostring(unwrap(self)) end,
+  __lt = function(self,other)
+    local t = unwrap(self)
+    if type(other) ~= "table" then return false
+    elseif #t < #other then return true
+    elseif #t > #other then return false
+    elseif t == other then return false
+    else
+      for i=1,#t do
+	if t[i] > other[i] then return false end
+      end
+      return true
+    end
+  end,
+  __le =  function(self,other)
+    local t = unwrap(self)
+    -- equality is comparing references (tuples are in-mutable and interned)
+    if self == other then return true end
+    return self < other
+  end,
+  __pairs = function(self) return pairs(unwrap(self)) end,
+  __ipairs = function(self) return ipairs(unwrap(self)) end,
+  __concat = function(self,other) return unwrap(self) .. other end,
+  __gc = function(self)
+    local h = hash(self)
+    if h then
+      local p = h % NUM_BUCKETS
+      if list_of_tuples[p] and not next(list_of_tuples[p]) then
+	list_of_tuples[p] = nil
+      end
+    end
+  end,
+  __mode = "v",
+}
+
 -- returns a wrapper table (proxy) which shades the data table, allowing
 -- in-mutability in Lua, it receives the table data and the number of elements
 local function proxy(tpl,n)
   setmetatable(tpl, tuple_instance_mt)
-  return setmetatable({}, {
-      -- the proxy table has an in-mutable metatable, and stores in __metatable
-      -- a string identifier, the real tuple data and the number of elements
-      __metatable = { "is_tuple", tpl , n },
-      __index = tpl,
-      __newindex = function(self) error("Tuples are in-mutable data") end,
-      __len = function(self) return getmetatable(self)[3] end,
-      __tostring = function(self) return tostring(getmetatable(self)[2]) end,
-      __lt = function(self,other)
-	local t = getmetatable(self)[2]
-	if type(other) ~= "table" then return false
-	elseif #t < #other then return true
-	elseif #t > #other then return false
-	elseif t == other then return false
-	else
-	  for i=1,#t do
-	    if t[i] > other[i] then return false end
-	  end
-	  return true
-	end
-      end,
-      __le = function(self,other)
-	local t = getmetatable(self)[2]
-	-- equality is comparing references (tuples are in-mutable and interned)
-	if self == other then return true end
-	return self < other
-      end,
-      __pairs = function(self) return pairs(getmetatable(self)[2]) end,
-      __ipairs = function(self) return ipairs(getmetatable(self)[2]) end,
-      __concat = function(self,other) return getmetatable(self)[2] .. other end,
-      __mode = "v",
-  })
+  local ref = setmetatable({}, proxy_metatable)
+  -- the proxy table has an in-mutable metatable, and stores in tuples_metadata
+  -- the real tuple data and the number of elements
+  tuples_metadata[ref] = { tpl, n }
+  return ref
 end
 
 -- builds a candidate tuple given a table, recursively converting tables in new
@@ -204,7 +249,8 @@ local tuple_mt = {
       local mt = getmetatable(t) if mt and mt[1]=="is_tuple" then return t end
       -- create a new tuple candidate
       local new_tuple = tuple_constructor(t)
-      local p = compute_hash(new_tuple) % NUM_BUCKETS
+      local h = compute_hash(new_tuple)
+      local p = h % NUM_BUCKETS
       local bucket = (list_of_tuples[p] or setmetatable({}, WEAK_MT))
       list_of_tuples[p] = bucket
       -- Count the number of elements in the bucket and the maximum non-nil key.
@@ -232,8 +278,8 @@ local tuple_mt = {
 	collectgarbage("collect")
       end
       bucket[max+1] = new_tuple
-      -- take note of the bucket into __metatable array, position 4
-      getmetatable(new_tuple)[4] = p
+      -- take note of the hash number into __metatable array, position 4
+      tuples_metadata[new_tuple][3] = h
       return new_tuple
     end
   end,
@@ -273,7 +319,9 @@ tuple.stats = function()
     for k2,v2 in pairs(v1) do size=size+1 end
   end
   if num_buckets == 0 then num_buckets = 1 end
-  return size,num_buckets,size/NUM_BUCKETS
+  local msz = 0
+  for _,v in pairs(tuples_metadata) do msz = msz + 1 end
+  return size,num_buckets,size/NUM_BUCKETS,msz
 end
 
 return tuple
