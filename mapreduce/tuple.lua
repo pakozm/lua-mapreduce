@@ -75,7 +75,10 @@ local list_of_tuples = {}
 local tuples_metadata = setmetatable({}, { __mode="k" })
 
 -- iterate over all chars of a string
-local function char_iterator(data,j) j=j+1 return j,string.byte(data:sub(j,j)) end
+local function char_iterator(data,j)
+  j=j+1
+  if j < #data then return j,string.byte(data:sub(j,j)) end
+end
 
 -- converts a number into a binary string, for hash computation purposes
 local function number_iterator(data,j)
@@ -246,7 +249,7 @@ local tuple_mt = {
       return t
     else
       -- check if the given table is a tuple, if it is the case, just return it
-      local mt = getmetatable(t) if mt and mt[1]=="is_tuple" then return t end
+      local mt = getmetatable(t) if mt=="is_tuple" then return t end
       -- create a new tuple candidate
       local new_tuple = tuple_constructor(t)
       local h = compute_hash(new_tuple)
@@ -291,9 +294,9 @@ setmetatable(tuple, tuple_mt)
 ----------------------------------------------------------------------------
 
 tuple.utest = function()
-  local a = tuple(2,{4,5},3)
+  local a = tuple(2,{4,5},"a")
   local b = tuple(4,5)
-  local c = tuple(2,a[2],3)
+  local c = tuple(2,a[2],"a")
   assert(a == c)
   assert(b == a[2])
   assert(b == c[2])
@@ -307,6 +310,8 @@ tuple.utest = function()
   aux = nil
   collectgarbage("collect")
   assert(tuple.stats() == 0)
+  --
+  assert(not getmetatable(tuple(1)))
 end
 
 -- returns the number of tuples "alive", the number of used buckets, and the
