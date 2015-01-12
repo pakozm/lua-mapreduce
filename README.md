@@ -1,6 +1,13 @@
 Lua-MapReduce
 =============
 
+[![Build Status](https://travis-ci.org/pakozm/lua-mapreduce.png?branch=master)](https://travis-ci.org/pakozm/lua-mapreduce) Travis CI (master branch)
+
+[![Build Status](https://travis-ci.org/pakozm/lua-mapreduce.png?branch=devel)](https://travis-ci.org/pakozm/lua-mapreduce) Travis CI (devel branch)
+
+Introduction
+------------
+
 Lua MapReduce implementation based in MongoDB. It differs from
 [ohitjoshi/lua-mapreduce](https://github.com/rohitjoshi/lua-mapreduce)
 in the basis of the communication between the processes. In order to

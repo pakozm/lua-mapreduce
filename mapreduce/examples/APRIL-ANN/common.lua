@@ -1,6 +1,6 @@
 -- Copyright 2014, Francisco Zamora-Martinez
 --
--- Common functions for April-ANN training scripts
+-- Common functions for APRIL-ANN training scripts
 -- https://github.com/pakozm/april-ann
 local mongo    = require "mongo"
 local mr_utils = require "mapreduce.utils"
@@ -180,18 +180,23 @@ local finalfn = function(pairs_iterator)
   assert(tr_loss_mean)
   --
   conf:read_only(true)
+  local weights_table = trainer:get_weights_table()
   local non_stop =
     train_func:execute(function()
-                         optimizer:execute(function(it)
-                                             assert(not it or it == 0)
-                                             thenet:reset(it)
-                                             return tr_loss_mean,weight_grads
-                                           end,
-                                           trainer:get_weights_table())
-                         local va_loss_mean,va_loss_var =
-                           compute_validation_loss(trainer, conf)
-                         return trainer, tr_loss_mean, va_loss_mean
-                       end)
+	optimizer:execute(function(x,it)
+	    if x ~= weights_table then
+	      trainer:build{ weights = x }
+	      weights_table = x
+	    end
+	    assert(not it or it == 0)
+	    thenet:reset(it)
+	    return tr_loss_mean,weight_grads
+			  end,
+	    weights_table)
+	local va_loss_mean,va_loss_var =
+	  compute_validation_loss(trainer, conf)
+	return trainer, tr_loss_mean, va_loss_mean
+    end)
   conf:read_only(false)
   serialize_to_gridfs(gridfs, assert(conf.train_func), train_func)
   --
