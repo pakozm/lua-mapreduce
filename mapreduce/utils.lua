@@ -44,6 +44,7 @@ local utils = {
     REDUCE   = "REDUCE",
     FINISHED = "FINISHED",
   },
+  MAX_IDLE_COUNT       =     5, -- maximum number of iterations without job
   MAX_WORKER_RETRIES   =     3,
   MAX_JOB_RETRIES      =     3,
   MAX_PENDING_INSERTS  = 50000,

@@ -254,6 +254,7 @@ function task.reset_cache()
 end
 
 -- workers use this method to load a new job in the caller object
+local count_idle_iterations = 0
 function task:take_next_job(tmpname)
   local db = self.cnn:connect()
   local task_status = self:get_task_status()
@@ -277,11 +278,17 @@ function task:take_next_job(tmpname)
   -- reducing the overhead for loading data
   if self:get_iteration() > 1 and task_status == TASK_STATUS.MAP then
     query._id = { ["$in"] = cache_map_ids }
-    -- check the count, if zero, configure the query to get a broken job
+    -- check the count
     if db:count(jobs_ns, query) == 0 then
+      -- if zero, count one more IDLE iteration, and check the counter
+      count_idle_iterations = count_idle_iterations + 1
       query._id = nil
-      query["$or"] = nil
-      query.status = STATUS.BROKEN
+      -- in case the counter is within the limit, take only a broken job in case
+      -- the counter exceeds its limit, take any job, broken or waiting
+      if count_idle_iterations <= utils.MAX_IDLE_COUNT then
+	query["$or"] = nil
+	query.status = STATUS.BROKEN
+      end
     end
   end
   local set_query = {
@@ -301,6 +308,8 @@ function task:take_next_job(tmpname)
   -- updated its data
   local job_tbl = db:find_one(jobs_ns, set_query)
   if job_tbl then
+    -- reset the IDLE counter
+    count_idle_iterations = 0
     if task_status == TASK_STATUS.MAP then
       local _id = job_tbl._id
       if not cache_inv_map_ids[_id] then
