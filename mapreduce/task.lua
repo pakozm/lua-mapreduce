@@ -58,7 +58,7 @@
 ]]
 
 local task = {
-  _VERSION = "0.3",
+  _VERSION = "0.4",
   _NAME = "task",
 }
 
@@ -277,7 +277,12 @@ function task:take_next_job(tmpname)
   -- reducing the overhead for loading data
   if self:get_iteration() > 1 and task_status == TASK_STATUS.MAP then
     query._id = { ["$in"] = cache_map_ids }
-    if db:count(jobs_ns, query) == 0 then query._id = nil end
+    -- check the count, if zero, configure the query to get a broken job
+    if db:count(jobs_ns, query) == 0 then
+      query._id = nil
+      query["$or"] = nil
+      query.status = STATUS.BROKEN
+    end
   end
   local set_query = {
     worker       = utils.get_hostname(),
