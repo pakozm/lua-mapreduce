@@ -1,6 +1,6 @@
 -- Copyright 2014, Francisco Zamora-Martinez
 --
--- Common functions for April-ANN training scripts
+-- Common functions for APRIL-ANN training scripts
 -- https://github.com/pakozm/april-ann
 local mongo    = require "mongo"
 local mr_utils = require "mapreduce.utils"

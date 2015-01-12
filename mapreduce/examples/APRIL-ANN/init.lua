@@ -1,6 +1,6 @@
 -- Copyright 2014, Francisco Zamora-Martinez
 --
--- Example of iterative MapReduce to train an ANN using April-ANN toolkit:
+-- Example of iterative MapReduce to train an ANN using APRIL-ANN toolkit:
 -- https://github.com/pakozm/april-ann
 
 local NUM_REDUCERS = 10
@@ -19,7 +19,7 @@ local weight_decay   = 1e-04
 local max_epochs     = 40
 local min_epochs     = 20
 
-local common = require "mapreduce.examples.April-ANN.common"
+local common = require "mapreduce.examples.APRIL-ANN.common"
 local cached = common.cached
 --
 local mat_cache = {}
