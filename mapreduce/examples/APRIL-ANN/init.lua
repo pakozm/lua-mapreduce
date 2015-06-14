@@ -161,7 +161,7 @@ end
 -- operations)
 local user_finalfn = function(train_func, conf)
   print(train_func:get_state_string())
-  train_func:save("best_func.lua")
+  util.serialize(train_func, "best_func.lua")
 end
 
 -----------------------------------------------------------------------------

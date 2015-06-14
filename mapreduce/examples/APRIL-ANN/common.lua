@@ -24,40 +24,30 @@ util.omp_set_num_threads(1)
 local serialize_to_gridfs = function(gridfs, filename, obj)
   gridfs:remove_file(filename)
   local builder = mongo.GridFileBuilder.New(db, dbname)
-  util.serialize(obj, function(str) builder:append(str) end, "binary")
+  builder:append(util.serialize(obj))
   builder:build(filename)
 end
 
 local deserialize_from_gridfs = function(gridfs, filename)
   local file = assert( gridfs:find_file(filename) )
-  return util.deserialize(function()
-                            local str_tbl = {}
-                            for i=1,file:num_chunks() do
-                              local chunk = file:chunk(i-1)
-                              table.insert(str_tbl, chunk:data())
-                            end
-                            return table.concat(str_tbl)
-                          end)
+  local str_tbl = {}
+  for i=1,file:num_chunks() do
+    local chunk = file:chunk(i-1)
+    table.insert(str_tbl, chunk:data())
+  end
+  return util.deserialize(table.concat(str_tbl))
 end
 
 local serialize_and_map_emit = function(key,value,emit)
-  util.serialize(value,
-                 function(serialized_value)
-                   emit(key, serialized_value)
-                 end,
-                 "binary")
+  emit(key, util.serialize(value))
 end
 
 local serialize_and_red_emit = function(value,emit)
-  util.serialize(value,
-                 function(serialized_value)
-                   emit(serialized_value)
-                 end,
-                 "binary")
+  emit(util.serialize(value))
 end
 
 local deserialize_emitted_value = function(str)
-  return util.deserialize(function() return str end)
+  return util.deserialize(str)
 end
 
 ------------------------------------------------------------------------------
