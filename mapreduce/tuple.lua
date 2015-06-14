@@ -1,21 +1,27 @@
 --[[
+  This file is part of Lua-FCES (https://github.com/pakozm/lua-fces)
   This file is part of Lua-Tuple (https://github.com/pakozm/lua-tuple)
   This file is part of Lua-MapReduce (https://github.com/pakozm/lua-mapreduce)
   
   Copyright 2014, Francisco Zamora-Martinez
   
-  The Lua-MapReduce toolkit is free software; you can redistribute it and/or modify it
-  under the terms of the GNU General Public License version 3 as
-  published by the Free Software Foundation
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
   
-  This library is distributed in the hope that it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
-  for more details.
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
   
-  You should have received a copy of the GNU General Public License
-  along with this library; if not, write to the Free Software Foundation,
-  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+  IN THE SOFTWARE.
 ]]
 
 -- Linear implementation of in-mutable and interned tuples for Lua. It is linear
@@ -30,17 +36,19 @@ local tuple = {
   _NAME = "tuple",
 }
 
--- the following hack is needed to allow unpack over tuples
-local table = require "table"
-local function table_unpack(t,i,n)
-  i = i or 1
-  n = n or #t
-  if i <= n then
-    return t[i], table_unpack(t, i + 1, n)
+if _VERSION ~= "Lua 5.3" then
+  -- the following hack is needed to allow unpack over tuples
+  local table = require "table"
+  local function table_unpack(t,i,n)
+    i = i or 1
+    n = n or #t
+    if i <= n then
+      return t[i], table_unpack(t, i + 1, n)
+    end
   end
+  table.unpack = table_unpack
+  unpack = table_unpack
 end
-table.unpack = table_unpack
-unpack = table_unpack
 
 -- libraries import
 local assert = assert
@@ -137,16 +145,6 @@ local tuple_instance_mt = {
   __metatable = false,
   -- avoid to insert new elements
   __newindex = function(self) error("Unable to modify a tuple") end,
-  -- convert it to a string like: tuple{ a, b, ... }
-  __tostring = function(self)
-    local result = {}
-    for i=1,#self do
-      local v = self[i]
-      if type(v) == "string" then v = string_format("%q",v) end
-      result[#result+1] = tostring(v)
-    end
-    return table_concat({"tuple{",table_concat(result, ", "),"}"}, " ")
-  end,
   -- concatenates two tuples or a tuple with a number, string or another table
   __concat = function(a,b)
     if type(a) ~= "table" then a,b=b,a end
@@ -171,7 +169,17 @@ local proxy_metatable = {
   __index = function(self,k) return unwrap(self)[k] end,
   __newindex = function(self) error("Tuples are in-mutable data") end,
   __len = function(self) return len(self) end,
-  __tostring = function(self) return tostring(unwrap(self)) end,
+  -- convert it to a string like: tuple{ a, b, ... }
+  __tostring = function(self)
+    local t = unwrap(self)
+    local result = {}
+    for i=1,#self do
+      local v = t[i]
+      if type(v) == "string" then v = string_format("%q",v) end
+      result[#result+1] = tostring(v)
+    end
+    return table_concat({"tuple{",table_concat(result, ", "),"}"}, " ")
+  end,
   __lt = function(self,other)
     local t = unwrap(self)
     if type(other) ~= "table" then return false
@@ -220,22 +228,22 @@ end
 -- builds a candidate tuple given a table, recursively converting tables in new
 -- tuples
 local function tuple_constructor(t)
-  local new_tuple = {}
-  for i,v in pairs(t) do
-    -- ignore the field "n" introduced by variadic args
-    if i~="n" then
-      assert(type(i) == "number" and i>0, "Needs integer keys > 0")
-      if type(v) == "table" then
-	-- recursively converts tables in new tuples
-	new_tuple[i] = tuple(v)
-      else
-	-- copies the value
-	new_tuple[i] = v
-      end
+  -- take n from the variadic args or from t length
+  local n = t.n or #t
+  local new_tuple = { }
+  for i=1,n do
+    local v = t[i]
+    assert(type(i) == "number" and i>0, "Needs integer keys > 0")
+    if type(v) == "table" then
+      -- recursively converts tables in new tuples
+      new_tuple[i] = tuple(v)
+    else
+      -- copies the value
+      new_tuple[i] = v
     end
   end
   -- returns a proxy to the new_tuple table with #t length
-  return proxy(new_tuple,#t)
+  return proxy(new_tuple,n)
 end
 
 -- metatable of tuple "class" table
@@ -264,9 +272,14 @@ local tuple_mt = {
       for i,vi in pairs(bucket) do
 	local equals = true
 	-- check equality by comparing all the elements one-by-one
-	for j,vj in ipairs(vi) do
-	  if vj ~= new_tuple[j] then equals=false break end
-	end
+        if #vi == #new_tuple then
+          for j=1,#vi do
+            local vj = vi[j]
+            if vj ~= new_tuple[j] then equals=false break end
+          end
+        else
+          equals = false
+        end
 	-- BREAKS the execution flow in case the tuple exists in the bucket
 	if equals == true then return vi end
 	max = math_max(max,i)
