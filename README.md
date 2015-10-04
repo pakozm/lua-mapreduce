@@ -9,7 +9,7 @@ Introduction
 ------------
 
 Lua MapReduce implementation based in MongoDB. It differs from
-[ohitjoshi/lua-mapreduce](https://github.com/rohitjoshi/lua-mapreduce)
+[rohitjoshi/lua-mapreduce](https://github.com/rohitjoshi/lua-mapreduce)
 in the basis of the communication between the processes. In order to
 allow fault tolerancy, and to reduce the communication protocol
 complexity, this implementation relies on mongoDB. So, all the data
