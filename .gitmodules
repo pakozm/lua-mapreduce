@@ -1,0 +1,3 @@
+[submodule "external/luamongo"]
+	path = external/luamongo
+	url = https://github.com/moai/luamongo.git
