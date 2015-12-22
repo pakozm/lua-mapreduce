@@ -3,7 +3,7 @@ services:
 env: LUA_PATH="./?/init.lua;./?.lua"
 before_install:
   - sudo apt-get update -qq
-  - sudo apt-get install -y screen lua5.2 liblua5.2-dev libboost-filesystem-dev libboost-filesystem-dev libboost-thread-dev libboost-regex-dev libssl-dev
+  - sudo apt-get install -y mongodb mongodb-server screen lua5.2 liblua5.2-dev libboost-filesystem-dev libboost-filesystem-dev libboost-thread-dev libboost-regex-dev libssl-dev
   - git submodule update --init --recursive
   - cd external/luamongo/external/mongo-cxx-driver/ && sudo scons --sharedclient=yes --prefix=/usr install && cd -
   - cd external/luamongo/ && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
