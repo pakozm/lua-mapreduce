@@ -19,7 +19,7 @@
 local mongo = require "mongo"
 local heap  = require "mapreduce.heap"
 
-assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
+assert(mongo._VERSION == "0.5" or tonumber(mongo._VERSION) > 0.5)
 
 local utils = {
   _VERSION = "0.3",
