@@ -11,5 +11,7 @@ before_install:
   - ssh-keyscan -t rsa localhost > ~/.ssh/known_hosts
   - ssh-keyscan -t rsa $(hostname) >> ~/.ssh/known_hosts
   - cp ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys
+before_script:
+  - sleep 15
 language: lua
 script: ./test.sh
