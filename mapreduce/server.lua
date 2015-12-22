@@ -333,7 +333,9 @@ local function server_drop_collections(self)
   local dbname = self.cnn:get_dbname()
   -- drop all the collections
   for _,name in ipairs(db:get_collections(dbname)) do
-    db:drop_collection(name)
+    if name ~= "system_indexes" then
+      db:drop_collection(dbname .. "." .. name)
+    end
   end
   local gridfs = self.cnn:gridfs()
   local list = gridfs:list()

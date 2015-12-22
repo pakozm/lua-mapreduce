@@ -19,7 +19,7 @@
 local mongo = require "mongo"
 local heap  = require "mapreduce.heap"
 
-assert(mongo._VERSION == "0.4" or tonumber(mongo._VERSION > 0.4))
+assert(mongo._VERSION == "0.5" or tonumber(mongo._VERSION) > 0.5)
 
 local utils = {
   _VERSION = "0.3",
@@ -131,7 +131,7 @@ end
 -- and last chunks where the line is contained, and the first and last position
 -- inside the corresponding chunks
 local function gridfs_lines_iterator(gridfs, filename)
-  local gridfile      = gridfs:find_file(filename)
+  local gridfile      = assert( gridfs:find_file_by_name(filename) )
   local size          = #gridfile
   local current_chunk = 0
   local current_pos   = 1
