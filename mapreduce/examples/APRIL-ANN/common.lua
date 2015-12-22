@@ -23,13 +23,13 @@ util.omp_set_num_threads(1)
 
 local serialize_to_gridfs = function(gridfs, filename, obj)
   gridfs:remove_file(filename)
-  local builder = mongo.GridFileBuilder.New(db, dbname)
+  local builder = mongo.GridFileBuilder.New(gridfs)
   builder:append(util.serialize(obj))
   builder:build(filename)
 end
 
 local deserialize_from_gridfs = function(gridfs, filename)
-  local file = assert( gridfs:find_file(filename) )
+  local file = assert( gridfs:find_file_by_name(filename) )
   local str_tbl = {}
   for i=1,file:num_chunks() do
     local chunk = file:chunk(i-1)

@@ -6,7 +6,7 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 for storage in gridfs shared sshfs; do
-    ## COMBINER + ASSOCIATIVE COMMUTATIVE IDEMPOTENT REDUCER
+    echo COMBINER + ASSOCIATIVE COMMUTATIVE IDEMPOTENT REDUCER
     screen -d -m ./execute_example_worker.sh
     diff <(./execute_example_server.sh $storage | awk '{ print $1,$2 }' | sort) \
         <(cat mapreduce/server.lua \
@@ -17,7 +17,7 @@ for storage in gridfs shared sshfs; do
         echo "ERROR"
         exit 1
     fi
-    ## NO COMBINER + ASSOCIATIVE COMMUTATIVE IDEMPOTENT REDUCER
+    echo NO COMBINER + ASSOCIATIVE COMMUTATIVE IDEMPOTENT REDUCER
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
         mapreduce.examples.WordCount.taskfn \
@@ -34,7 +34,7 @@ for storage in gridfs shared sshfs; do
         echo "ERROR"
         exit 1
     fi
-    ## NO COMBINER + GENERAL REDUCER
+    echo NO COMBINER + GENERAL REDUCER
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
         mapreduce.examples.WordCount.taskfn \
@@ -51,7 +51,7 @@ for storage in gridfs shared sshfs; do
         echo "ERROR"
         exit 1
     fi
-    ## INIT SCRIPT
+    echo INIT SCRIPT
     screen -d -m ./execute_example_worker.sh
     diff <(lua execute_server.lua localhost wordcount \
         mapreduce.examples.WordCount \

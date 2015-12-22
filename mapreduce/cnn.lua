@@ -44,8 +44,15 @@ function cnn:gridfs()
   return gridfs
 end
 
+-- this weak table allow to index gridfs objects using weak grid_file_builder
+-- keys
+local gridfs_instances = setmetatable({}, { __mode="k" })
+
 function cnn:grid_file_builder()
-  return mongo.GridFileBuilder.New(self:connect(), self.gridfs_dbname)
+  local gridfs = self:gridfs()
+  local grid_file_builder = mongo.GridFileBuilder.New(gridfs)
+  gridfs_instances[grid_file_builder] = gridfs
+  return grid_file_builder
 end
 
 function cnn:get_dbname()

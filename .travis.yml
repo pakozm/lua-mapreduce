@@ -4,12 +4,12 @@ env: LUA_PATH="./?/init.lua;./?.lua"
 before_install:
   - sudo apt-get update -qq
   - sudo apt-get install -y screen lua5.2 liblua5.2-dev libboost-filesystem-dev libboost-filesystem-dev libboost-thread-dev libssl-dev
-  - wget https://github.com/mongodb/mongo-cxx-driver/archive/legacy-0.9.0.tar.gz
-  - tar zxvf legacy-0.9.0.tar.gz
-  - cd mongo-cxx-driver-legacy-0.9.0 && sudo scons --prefix=/usr install-mongoclient && cd -
-  - wget https://github.com/moai/luamongo/archive/v0.4.3.tar.gz
-  - tar zxvf v0.4.3.tar.gz
-  - cd luamongo-0.4.3 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
+  - wget https://github.com/mongodb/mongo-cxx-driver/archive/legacy-1.1.0.tar.gz
+  - tar zxvf legacy-1.1.0.tar.gz
+  - cd mongo-cxx-driver-legacy-1.1.0 && sudo scons --sharedclient=yes --prefix=/usr install && cd -
+  - wget https://github.com/moai/luamongo/archive/v0.5.0.tar.gz
+  - tar zxvf v0.5.0.tar.gz
+  - cd luamongo-0.5.0 && make && sudo mkdir -p /usr/lib/lua/5.2 && sudo cp mongo.so /usr/lib/lua/5.2 && cd -
   - ssh-keygen -b 2048 -f /home/travis/.ssh/id_rsa -t rsa -q -N ""
   - ssh-keyscan -t rsa localhost > ~/.ssh/known_hosts
   - ssh-keyscan -t rsa $(hostname) >> ~/.ssh/known_hosts
